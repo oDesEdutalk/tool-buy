@@ -1184,10 +1184,18 @@ func maskSecret(fieldName, val string) string {
 }
 
 // fillFieldByExactSelector tìm chính xác ô input qua selector trong các Iframes hoặc Trang chính và điền trực tiếp
-func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string, value string) bool {
+func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string, value string) (success bool) {
 	if strings.TrimSpace(value) == "" {
 		return true
 	}
+
+	// Đảm bảo không bao giờ bị panic do frame bị huỷ bất ngờ
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[!] Cảnh báo recover trong fillFieldByExactSelector (%s): %v\n", fieldName, r)
+			success = false
+		}
+	}()
 
 	log.Printf("-> Đang tìm và điền %s (%s): '%s'...\n", fieldName, selector, maskSecret(fieldName, value))
 	isExpiry := strings.Contains(selector, "expiry") || strings.Contains(strings.ToLower(fieldName), "hạn")
@@ -1203,8 +1211,10 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 
 			// Kiểm tra selector trong frame bằng Eval siêu tốc
 			hasRes, err := frame.Eval(`(sel) => {
-				const el = document.querySelector(sel);
-				return !!el;
+				try {
+					const el = document.querySelector(sel);
+					return !!el;
+				} catch(e) { return false; }
 			}`, selector)
 
 			if err == nil && hasRes != nil && hasRes.Value.Bool() {
@@ -1216,7 +1226,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					_ = inp.Click(proto.InputMouseButtonLeft, 1)
 					time.Sleep(50 * time.Millisecond)
 
-					// Xoá nội dung cũ
+					// Xoá nội dung cũ bằng phím tắt
 					_ = inp.SelectAllText()
 					_ = frame.Keyboard.Press(input.ControlLeft)
 					_ = frame.Keyboard.Press(input.KeyA)
@@ -1227,7 +1237,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					}
 					time.Sleep(50 * time.Millisecond)
 
-					// Gõ giá trị
+					// Gõ giá trị bằng phím
 					if isExpiry {
 						cleanDigits := ""
 						for _, r := range value {
@@ -1236,41 +1246,41 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 							}
 						}
 						if len(cleanDigits) == 4 {
-							// 1. Gõ 2 số tháng (MM)
+							// Gõ 2 số đầu (Tháng MM)
 							_ = inp.Input(string(cleanDigits[0]))
-							time.Sleep(40 * time.Millisecond)
+							time.Sleep(50 * time.Millisecond)
 							_ = inp.Input(string(cleanDigits[1]))
 
-							// 2. Chờ nửa giây (500ms) để mask Shopify tự chèn " / "
-							time.Sleep(500 * time.Millisecond)
+							// Dừng đúng 600ms để Shopify mask tự format " / "
+							time.Sleep(600 * time.Millisecond)
 
-							// 3. Gõ 2 số năm (YY)
+							// Gõ 2 số sau (Năm YY)
 							_ = inp.Input(string(cleanDigits[2]))
-							time.Sleep(40 * time.Millisecond)
+							time.Sleep(50 * time.Millisecond)
 							_ = inp.Input(string(cleanDigits[3]))
 							time.Sleep(100 * time.Millisecond)
 						} else {
 							for _, ch := range value {
 								_ = inp.Input(string(ch))
-								time.Sleep(35 * time.Millisecond)
+								time.Sleep(40 * time.Millisecond)
 							}
 						}
 					} else {
 						for _, ch := range value {
 							_ = inp.Input(string(ch))
-							time.Sleep(35 * time.Millisecond)
+							time.Sleep(40 * time.Millisecond)
 						}
 						time.Sleep(50 * time.Millisecond)
 
-						// Set giá trị và kích hoạt sự kiện DOM trong Frame
-						_, _ = frame.Eval(`(sel, val) => {
-							const el = document.querySelector(sel);
-							if (el) {
-								el.value = val;
-								el.dispatchEvent(new Event('input', { bubbles: true }));
-								el.dispatchEvent(new Event('change', { bubbles: true }));
-							}
-						}`, selector, value)
+						_, _ = frame.Eval(`(sel) => {
+							try {
+								const el = document.querySelector(sel);
+								if (el) {
+									el.dispatchEvent(new Event('input', { bubbles: true }));
+									el.dispatchEvent(new Event('change', { bubbles: true }));
+								}
+							} catch(e) {}
+						}`, selector)
 					}
 
 					log.Printf("-> ĐÃ ĐIỀN THÀNH CÔNG %s!\n", fieldName)
@@ -1281,12 +1291,14 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 	}
 
 	// 2. Nếu nằm trên trang chính
-	hasMain, _ := page.Eval(`(sel) => {
-		const el = document.querySelector(sel);
-		return !!el;
+	hasMain, err := page.Eval(`(sel) => {
+		try {
+			const el = document.querySelector(sel);
+			return !!el;
+		} catch(e) { return false; }
 	}`, selector)
 
-	if hasMain != nil && hasMain.Value.Bool() {
+	if err == nil && hasMain != nil && hasMain.Value.Bool() {
 		inp, err := page.Element(selector)
 		if err == nil && inp != nil {
 			log.Printf("-> [Main DOM] Bắt trúng %s trên trang chính!\n", fieldName)
@@ -1314,34 +1326,35 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 				}
 				if len(cleanDigits) == 4 {
 					_ = inp.Input(string(cleanDigits[0]))
-					time.Sleep(40 * time.Millisecond)
+					time.Sleep(50 * time.Millisecond)
 					_ = inp.Input(string(cleanDigits[1]))
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(600 * time.Millisecond)
 					_ = inp.Input(string(cleanDigits[2]))
-					time.Sleep(40 * time.Millisecond)
+					time.Sleep(50 * time.Millisecond)
 					_ = inp.Input(string(cleanDigits[3]))
 					time.Sleep(100 * time.Millisecond)
 				} else {
 					for _, ch := range value {
 						_ = inp.Input(string(ch))
-						time.Sleep(35 * time.Millisecond)
+						time.Sleep(40 * time.Millisecond)
 					}
 				}
 			} else {
 				for _, ch := range value {
 					_ = inp.Input(string(ch))
-					time.Sleep(35 * time.Millisecond)
+					time.Sleep(40 * time.Millisecond)
 				}
 				time.Sleep(50 * time.Millisecond)
 
-				_, _ = page.Eval(`(sel, val) => {
-					const el = document.querySelector(sel);
-					if (el) {
-						el.value = val;
-						el.dispatchEvent(new Event('input', { bubbles: true }));
-						el.dispatchEvent(new Event('change', { bubbles: true }));
-					}
-				}`, selector, value)
+				_, _ = page.Eval(`(sel) => {
+					try {
+						const el = document.querySelector(sel);
+						if (el) {
+							el.dispatchEvent(new Event('input', { bubbles: true }));
+							el.dispatchEvent(new Event('change', { bubbles: true }));
+						}
+					} catch(e) {}
+				}`, selector)
 			}
 
 			log.Printf("-> ĐÃ ĐIỀN THÀNH CÔNG %s TRÊN TRANG CHÍNH!\n", fieldName)
