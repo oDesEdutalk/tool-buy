@@ -1164,6 +1164,46 @@ func maskSecret(fieldName, val string) string {
 	return val
 }
 
+// typeSlowlyCardField gõ từng ký tự từ từ để tránh lỗi mask tự động của Shopify (đặc biệt là ô expiry)
+func typeSlowlyCardField(inputFn func(ch string), elementId string, text string) {
+	if elementId == "expiry" {
+		// Chuẩn hoá chỉ lấy số
+		cleanDigits := ""
+		for _, r := range text {
+			if r >= '0' && r <= '9' {
+				cleanDigits += string(r)
+			}
+		}
+
+		if len(cleanDigits) == 4 {
+			// 1. Gõ 2 số tháng MM (chậm 130-200ms)
+			for _, ch := range cleanDigits[:2] {
+				inputFn(string(ch))
+				delay := 130 + rand.Intn(70)
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+			}
+
+			// 2. Tạm dừng 400ms để Javascript / Shopify mask tự sinh dấu gạch chéo " / " và dời con trỏ
+			time.Sleep(400 * time.Millisecond)
+
+			// 3. Gõ 2 số năm YY (chậm 130-200ms)
+			for _, ch := range cleanDigits[2:] {
+				inputFn(string(ch))
+				delay := 130 + rand.Intn(70)
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+			}
+			return
+		}
+	}
+
+	// Các trường khác (number, verification_value, name) gõ tốc độ vừa phải 90-160ms/phím
+	for _, ch := range text {
+		inputFn(string(ch))
+		delay := 90 + rand.Intn(70)
+		time.Sleep(time.Duration(delay) * time.Millisecond)
+	}
+}
+
 // fillCardFieldById tìm chính xác element theo ID cụ thể (#number, #expiry, #verification_value, #name)
 func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text string) bool {
 	if strings.TrimSpace(text) == "" {
@@ -1171,7 +1211,7 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 	}
 
 	selector := "#" + elementId
-	log.Printf("-> Đang tìm và nhập %s (id='%s'): '%s'...\n", fieldName, elementId, maskSecret(fieldName, text))
+	log.Printf("-> Đang tìm và gõ từ từ %s (id='%s'): '%s'...\n", fieldName, elementId, maskSecret(fieldName, text))
 
 	// 1. Quét qua tất cả Iframe Elements trên trang chính trước (chính xác và ổn định nhất)
 	iframes, err := page.Elements("iframe")
@@ -1183,9 +1223,9 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 				if err == nil && len(els) > 0 {
 					el := els[0]
 					_ = el.ScrollIntoView()
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 					_ = el.Click(proto.InputMouseButtonLeft, 1)
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 
 					// Xoá sạch dữ liệu cũ (Ctrl+A -> Backspace + chuỗi backspace dự phòng)
 					_ = el.SelectAllText()
@@ -1196,14 +1236,13 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 					for k := 0; k < 25; k++ {
 						_ = frame.Keyboard.Press(input.Backspace)
 					}
-					time.Sleep(50 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 
-					// Gõ từng ký tự vào element
-					for _, ch := range text {
-						_ = el.Input(string(ch))
-						delay := 25 + rand.Intn(30)
-						time.Sleep(time.Duration(delay) * time.Millisecond)
-					}
+					// Gõ từ từ từng ký tự vào element
+					typeSlowlyCardField(func(ch string) {
+						_ = el.Input(ch)
+					}, elementId, text)
+
 					log.Printf("-> [Iframe Frame DOM] Đã nhập thành công %s qua id='%s' trong iframe #%d!\n", fieldName, elementId, idx)
 					return true
 				}
@@ -1225,7 +1264,7 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 
 			if err == nil && ifrRes != nil && ifrRes.Value.Get("matched").Bool() && ifrRes.Value.Get("visible").Bool() {
 				_ = ifr.ScrollIntoView()
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 				_ = ifr.Click(proto.InputMouseButtonLeft, 1)
 				time.Sleep(150 * time.Millisecond)
 				_ = page.Keyboard.Press(input.ControlLeft)
@@ -1235,13 +1274,12 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 				for k := 0; k < 25; k++ {
 					_ = page.Keyboard.Press(input.Backspace)
 				}
-				time.Sleep(50 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 
-				for _, ch := range text {
-					_ = page.InsertText(string(ch))
-					delay := 25 + rand.Intn(30)
-					time.Sleep(time.Duration(delay) * time.Millisecond)
-				}
+				typeSlowlyCardField(func(ch string) {
+					_ = page.InsertText(ch)
+				}, elementId, text)
+
 				log.Printf("-> [Iframe Click+Type] Đã nhập thành công %s vào iframe id='%s'!\n", fieldName, elementId)
 				return true
 			}
@@ -1257,9 +1295,9 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 				if err == nil && len(els) > 0 {
 					el := els[0]
 					_ = el.ScrollIntoView()
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 					_ = el.Click(proto.InputMouseButtonLeft, 1)
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 
 					_ = el.SelectAllText()
 					_ = target.Keyboard.Press(input.ControlLeft)
@@ -1269,13 +1307,12 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 					for k := 0; k < 25; k++ {
 						_ = target.Keyboard.Press(input.Backspace)
 					}
-					time.Sleep(50 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 
-					for _, ch := range text {
-						_ = el.Input(string(ch))
-						delay := 25 + rand.Intn(30)
-						time.Sleep(time.Duration(delay) * time.Millisecond)
-					}
+					typeSlowlyCardField(func(ch string) {
+						_ = el.Input(ch)
+					}, elementId, text)
+
 					log.Printf("-> [Target Element] Đã nhập thành công %s qua id='%s'!\n", fieldName, elementId)
 					return true
 				}
@@ -1288,9 +1325,9 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 	if err == nil && len(els) > 0 {
 		el := els[0]
 		_ = el.ScrollIntoView()
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 		_ = el.Click(proto.InputMouseButtonLeft, 1)
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 
 		_ = el.SelectAllText()
 		_ = page.Keyboard.Press(input.ControlLeft)
@@ -1300,13 +1337,12 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 		for k := 0; k < 25; k++ {
 			_ = page.Keyboard.Press(input.Backspace)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 
-		for _, ch := range text {
-			_ = el.Input(string(ch))
-			delay := 25 + rand.Intn(30)
-			time.Sleep(time.Duration(delay) * time.Millisecond)
-		}
+		typeSlowlyCardField(func(ch string) {
+			_ = el.Input(ch)
+		}, elementId, text)
+
 		log.Printf("-> [Main DOM] Đã nhập thành công %s qua id='%s'!\n", fieldName, elementId)
 		return true
 	}
@@ -1314,7 +1350,7 @@ func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text 
 	return false
 }
 
-// fillPaymentCardForm thực hiện toàn bộ quy trình điền thẻ tín dụng (Card Number, Expiry, CVV)
+// fillPaymentCardForm thực hiện toàn bộ quy trình điền thẻ tín dụng (Card Number, Expiry, CVV, Name)
 func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	if profile.CardNumber == "" {
 		log.Println("[!] Không có thông tin số thẻ tín dụng để điền.")
@@ -1342,7 +1378,7 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 		maskSecret("card", profile.CardNumber), expMonth, expYear, expCombined, maskSecret("cvv", profile.CVV))
 
 	startTime := time.Now()
-	timeout := 35 * time.Second
+	timeout := 40 * time.Second
 
 	cardFilled := false
 	expiryFilled := false
@@ -1353,15 +1389,15 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 		if !cardFilled {
 			cardFilled = fillCardFieldById(page, "Số thẻ (Card Number)", "number", profile.CardNumber)
 			if cardFilled {
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(600 * time.Millisecond)
 			}
 		}
 
-		// 2. Điền Ngày hết hạn với id="expiry"
+		// 2. Điền Ngày hết hạn với id="expiry" (gõ từ từ MM rồi dừng chờ mask format rồi gõ YY)
 		if !expiryFilled && cardFilled {
 			expiryFilled = fillCardFieldById(page, "Hạn dùng (Expiration Date)", "expiry", expCombined)
 			if expiryFilled {
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(600 * time.Millisecond)
 			}
 		}
 
@@ -1369,12 +1405,15 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 		if !cvvFilled && expiryFilled {
 			cvvFilled = fillCardFieldById(page, "Mã bảo mật (CVV/Security Code)", "verification_value", profile.CVV)
 			if cvvFilled {
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(600 * time.Millisecond)
 			}
 		}
 
 		// 4. Điền Tên trên thẻ nếu có (id="name")
-		fillCardFieldById(page, "Tên trên thẻ (Name on Card)", "name", profile.FullName)
+		if profile.FullName != "" {
+			fillCardFieldById(page, "Tên trên thẻ (Name on Card)", "name", profile.FullName)
+			time.Sleep(400 * time.Millisecond)
+		}
 
 		if cardFilled && expiryFilled && cvvFilled {
 			log.Println("==================================================")
