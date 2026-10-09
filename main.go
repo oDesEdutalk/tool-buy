@@ -21,7 +21,7 @@ import (
 
 // DefaultProxy do người dùng cung cấp
 
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-24993318:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-10840789:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -128,6 +128,11 @@ func main() {
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")
 	addressFlag := flag.String("address", "820 Roxfield Ct, Buford GA 30518", "Địa chỉ gõ vào ô tìm kiếm (hoặc lấy từ -data)")
 	phoneFlag := flag.String("phone", "", "Số điện thoại")
+	cardFlag := flag.String("card", "", "Số thẻ tín dụng")
+	monthFlag := flag.String("month", "", "Tháng hết hạn MM")
+	yearFlag := flag.String("year", "", "Năm hết hạn YY")
+	cvvFlag := flag.String("cvv", "", "Mã bảo mật CVV")
+	discountFlag := flag.String("discount", "IDME_ON_20_JOLDOZ", "Mã giảm giá (Discount code)")
 
 	flag.Parse()
 
@@ -153,6 +158,18 @@ func main() {
 	if *phoneFlag != "" {
 		profile.Phone = *phoneFlag
 	}
+	if *cardFlag != "" {
+		profile.CardNumber = *cardFlag
+	}
+	if *monthFlag != "" {
+		profile.ExpMonth = *monthFlag
+	}
+	if *yearFlag != "" {
+		profile.ExpYear = *yearFlag
+	}
+	if *cvvFlag != "" {
+		profile.CVV = *cvvFlag
+	}
 
 	log.Println("==================================================")
 	log.Println("     TOOL AUTOMATION BROWSER SOCKS5 (GOLANG)      ")
@@ -164,6 +181,7 @@ func main() {
 	log.Printf("-> Địa chỉ tìm   : %s\n", profile.RawAddress)
 	log.Printf("-> Số điện thoại : %s\n", profile.Phone)
 	log.Printf("-> Thẻ tín dụng  : %s | %s/%s | CVV: %s\n", profile.CardNumber, profile.ExpMonth, profile.ExpYear, profile.CVV)
+	log.Printf("-> Mã giảm giá   : %s\n", *discountFlag)
 
 	l := launcher.New().
 		Headless(*headless).
@@ -257,14 +275,32 @@ func main() {
 		log.Printf("[!] Cảnh báo khi điền form checkout: %v", err)
 	}
 
+	// 6. Điền thông tin Thẻ tín dụng (Credit Card Payment)
+	err = fillPaymentCardForm(page, profile)
+	if err != nil {
+		log.Printf("[!] Cảnh báo khi điền thông tin thẻ tín dụng: %v", err)
+	}
+
+	// 7. Nhập và áp dụng Mã giảm giá (Discount Code)
+	if *discountFlag != "" {
+		err = applyDiscountCode(page, *discountFlag)
+		if err != nil {
+			log.Printf("[!] Cảnh báo khi áp dụng mã giảm giá: %v", err)
+		}
+	}
+
+	// 8. Chờ kiểm tra giá sau khi áp mã giảm giá và bấm "Pay now" (có nhập lại thẻ nếu thử lại)
+	err = extractOrderSummaryAndPayNow(page, profile)
+	if err != nil {
+		log.Printf("[!] Cảnh báo khi thanh toán: %v", err)
+	}
+
 	log.Println("==================================================")
-	log.Println("-> HOÀN TẤT ĐIỀN TOÀN BỘ THÔNG TIN THANH TOÁN!")
-	log.Println("-> Trình duyệt đang mở. Nhấn Ctrl+C để thoát.")
+	log.Println("-> HOÀN TẤT TOÀN BỘ QUY TRÌNH MUA HÀNG VÀ THANH TOÁN!")
+	log.Println("-> Đã thực hiện thanh toán xong. Kết thúc phiên làm việc sau 5 giây...")
 	log.Println("==================================================")
 
-	for {
-		time.Sleep(1 * time.Second)
-	}
+	time.Sleep(5 * time.Second)
 }
 
 // fillCheckoutForm chờ tải trang checkout và gõ thông tin Email, Họ Tên, Địa chỉ (chọn gợi ý) và Số điện thoại
@@ -1079,4 +1115,558 @@ func handleLocalSocksConn(client net.Conn, dialer proxy.Dialer) {
 		done <- struct{}{}
 	}()
 	<-done
+}
+
+// ensurePaymentSectionVisible cuộn tới phần thanh toán và đảm bảo đã chọn Credit Card
+func ensurePaymentSectionVisible(page *rod.Page) {
+	log.Println("-> [BƯỚC 6.1] Đang cuộn xuống và chọn phương thức thanh toán Credit card...")
+
+	_, _ = page.Eval(`() => {
+		// 1. Tìm heading hoặc container Payment / Credit card
+		const elements = Array.from(document.querySelectorAll('h1, h2, h3, h4, legend, label, span, div'));
+		for (const el of elements) {
+			const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+			if (text === 'payment' || text === 'credit card' || text.startsWith('credit card')) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				break;
+			}
+		}
+
+		// 2. Tìm radio button Credit card nếu chưa checked
+		const radios = Array.from(document.querySelectorAll('input[type="radio"], [role="radio"]'));
+		for (const r of radios) {
+			const id = (r.id || '').toLowerCase();
+			const val = (r.value || '').toLowerCase();
+			const aria = (r.getAttribute('aria-label') || '').toLowerCase();
+			const parent = r.closest('label, div');
+			const pText = parent ? (parent.innerText || '').toLowerCase() : '';
+
+			if (id.includes('credit') || id.includes('card') || val.includes('credit') || aria.includes('credit') || pText.includes('credit card')) {
+				if (!r.checked && typeof r.click === 'function') {
+					r.click();
+				}
+				break;
+			}
+		}
+	}`)
+	time.Sleep(1500 * time.Millisecond)
+}
+
+// maskSecret che giấu thông tin nhạy cảm khi hiển thị log
+func maskSecret(fieldName, val string) string {
+	lower := strings.ToLower(fieldName)
+	if strings.Contains(lower, "cvv") || strings.Contains(lower, "security") {
+		return "***"
+	}
+	if len(val) >= 12 {
+		return val[:4] + strings.Repeat("*", len(val)-8) + val[len(val)-4:]
+	}
+	return val
+}
+
+// fillCardFieldById tìm chính xác element theo ID cụ thể (#number, #expiry, #verification_value, #name)
+func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+
+	selector := "#" + elementId
+	log.Printf("-> Đang tìm và nhập %s (id='%s'): '%s'...\n", fieldName, elementId, maskSecret(fieldName, text))
+
+	// 1. Quét qua tất cả Iframe Elements trên trang chính trước (chính xác và ổn định nhất)
+	iframes, err := page.Elements("iframe")
+	if err == nil {
+		for idx, ifr := range iframes {
+			frame, err := ifr.Frame()
+			if err == nil && frame != nil {
+				els, err := frame.Elements(selector)
+				if err == nil && len(els) > 0 {
+					el := els[0]
+					_ = el.ScrollIntoView()
+					time.Sleep(100 * time.Millisecond)
+					_ = el.Click(proto.InputMouseButtonLeft, 1)
+					time.Sleep(100 * time.Millisecond)
+
+					// Xoá sạch dữ liệu cũ (Ctrl+A -> Backspace + chuỗi backspace dự phòng)
+					_ = el.SelectAllText()
+					_ = frame.Keyboard.Press(input.ControlLeft)
+					_ = frame.Keyboard.Press(input.KeyA)
+					_ = frame.Keyboard.Release(input.ControlLeft)
+					_ = frame.Keyboard.Press(input.Backspace)
+					for k := 0; k < 25; k++ {
+						_ = frame.Keyboard.Press(input.Backspace)
+					}
+					time.Sleep(50 * time.Millisecond)
+
+					// Gõ từng ký tự vào element
+					for _, ch := range text {
+						_ = el.Input(string(ch))
+						delay := 25 + rand.Intn(30)
+						time.Sleep(time.Duration(delay) * time.Millisecond)
+					}
+					log.Printf("-> [Iframe Frame DOM] Đã nhập thành công %s qua id='%s' trong iframe #%d!\n", fieldName, elementId, idx)
+					return true
+				}
+			}
+
+			// B. Kiểm tra nếu Iframe có name/id chứa elementId
+			ifrRes, err := ifr.Eval(`function(targetId) {
+				const name = (this.getAttribute('name') || '').toLowerCase();
+				const id = (this.id || '').toLowerCase();
+				const src = (this.src || '').toLowerCase();
+				const title = (this.title || '').toLowerCase();
+				const combined = name + ' ' + id + ' ' + src + ' ' + title;
+				const rect = this.getBoundingClientRect();
+				return {
+					matched: combined.includes(targetId),
+					visible: rect.width > 10 && rect.height > 10
+				};
+			}`, elementId)
+
+			if err == nil && ifrRes != nil && ifrRes.Value.Get("matched").Bool() && ifrRes.Value.Get("visible").Bool() {
+				_ = ifr.ScrollIntoView()
+				time.Sleep(100 * time.Millisecond)
+				_ = ifr.Click(proto.InputMouseButtonLeft, 1)
+				time.Sleep(150 * time.Millisecond)
+				_ = page.Keyboard.Press(input.ControlLeft)
+				_ = page.Keyboard.Press(input.KeyA)
+				_ = page.Keyboard.Release(input.ControlLeft)
+				_ = page.Keyboard.Press(input.Backspace)
+				for k := 0; k < 25; k++ {
+					_ = page.Keyboard.Press(input.Backspace)
+				}
+				time.Sleep(50 * time.Millisecond)
+
+				for _, ch := range text {
+					_ = page.InsertText(string(ch))
+					delay := 25 + rand.Intn(30)
+					time.Sleep(time.Duration(delay) * time.Millisecond)
+				}
+				log.Printf("-> [Iframe Click+Type] Đã nhập thành công %s vào iframe id='%s'!\n", fieldName, elementId)
+				return true
+			}
+		}
+	}
+
+	// 2. Quét qua Browser Targets (Xử lý các target iframe độc lập OOPIF)
+	if browser := page.Browser(); browser != nil {
+		targets, err := browser.Pages()
+		if err == nil {
+			for _, target := range targets {
+				els, err := target.Elements(selector)
+				if err == nil && len(els) > 0 {
+					el := els[0]
+					_ = el.ScrollIntoView()
+					time.Sleep(100 * time.Millisecond)
+					_ = el.Click(proto.InputMouseButtonLeft, 1)
+					time.Sleep(100 * time.Millisecond)
+
+					_ = el.SelectAllText()
+					_ = target.Keyboard.Press(input.ControlLeft)
+					_ = target.Keyboard.Press(input.KeyA)
+					_ = target.Keyboard.Release(input.ControlLeft)
+					_ = target.Keyboard.Press(input.Backspace)
+					for k := 0; k < 25; k++ {
+						_ = target.Keyboard.Press(input.Backspace)
+					}
+					time.Sleep(50 * time.Millisecond)
+
+					for _, ch := range text {
+						_ = el.Input(string(ch))
+						delay := 25 + rand.Intn(30)
+						time.Sleep(time.Duration(delay) * time.Millisecond)
+					}
+					log.Printf("-> [Target Element] Đã nhập thành công %s qua id='%s'!\n", fieldName, elementId)
+					return true
+				}
+			}
+		}
+	}
+
+	// 3. Quét trên Main Page DOM
+	els, err := page.Elements(selector)
+	if err == nil && len(els) > 0 {
+		el := els[0]
+		_ = el.ScrollIntoView()
+		time.Sleep(100 * time.Millisecond)
+		_ = el.Click(proto.InputMouseButtonLeft, 1)
+		time.Sleep(100 * time.Millisecond)
+
+		_ = el.SelectAllText()
+		_ = page.Keyboard.Press(input.ControlLeft)
+		_ = page.Keyboard.Press(input.KeyA)
+		_ = page.Keyboard.Release(input.ControlLeft)
+		_ = page.Keyboard.Press(input.Backspace)
+		for k := 0; k < 25; k++ {
+			_ = page.Keyboard.Press(input.Backspace)
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		for _, ch := range text {
+			_ = el.Input(string(ch))
+			delay := 25 + rand.Intn(30)
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+		}
+		log.Printf("-> [Main DOM] Đã nhập thành công %s qua id='%s'!\n", fieldName, elementId)
+		return true
+	}
+
+	return false
+}
+
+// fillPaymentCardForm thực hiện toàn bộ quy trình điền thẻ tín dụng (Card Number, Expiry, CVV)
+func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
+	if profile.CardNumber == "" {
+		log.Println("[!] Không có thông tin số thẻ tín dụng để điền.")
+		return nil
+	}
+
+	log.Println("==================================================")
+	log.Println("-> [BƯỚC 6] BẮT ĐẦU ĐIỀN THÔNG TIN THẺ TÍN DỤNG...")
+	log.Println("==================================================")
+
+	ensurePaymentSectionVisible(page)
+
+	// Chuẩn bị chuỗi ngày hết hạn
+	expMonth := profile.ExpMonth
+	if len(expMonth) == 1 {
+		expMonth = "0" + expMonth
+	}
+	expYear := profile.ExpYear
+	if len(expYear) == 4 {
+		expYear = expYear[2:]
+	}
+	expCombined := expMonth + expYear // Ví dụ: "0729"
+
+	log.Printf("-> Dữ liệu thẻ cần điền: Số thẻ: %s | Hạn: %s/%s (%s) | CVV: %s\n",
+		maskSecret("card", profile.CardNumber), expMonth, expYear, expCombined, maskSecret("cvv", profile.CVV))
+
+	startTime := time.Now()
+	timeout := 35 * time.Second
+
+	cardFilled := false
+	expiryFilled := false
+	cvvFilled := false
+
+	for time.Since(startTime) < timeout {
+		// 1. Điền Số thẻ với id="number"
+		if !cardFilled {
+			cardFilled = fillCardFieldById(page, "Số thẻ (Card Number)", "number", profile.CardNumber)
+			if cardFilled {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+
+		// 2. Điền Ngày hết hạn với id="expiry"
+		if !expiryFilled && cardFilled {
+			expiryFilled = fillCardFieldById(page, "Hạn dùng (Expiration Date)", "expiry", expCombined)
+			if expiryFilled {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+
+		// 3. Điền CVV với id="verification_value"
+		if !cvvFilled && expiryFilled {
+			cvvFilled = fillCardFieldById(page, "Mã bảo mật (CVV/Security Code)", "verification_value", profile.CVV)
+			if cvvFilled {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+
+		// 4. Điền Tên trên thẻ nếu có (id="name")
+		fillCardFieldById(page, "Tên trên thẻ (Name on Card)", "name", profile.FullName)
+
+		if cardFilled && expiryFilled && cvvFilled {
+			log.Println("==================================================")
+			log.Println("-> ĐÃ HOÀN TẤT NHẬP CHÍNH XÁC TOÀN BỘ THẺ TÍN DỤNG (#number, #expiry, #verification_value)!")
+			log.Println("==================================================")
+			return nil
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	log.Printf("[!] Kết quả điền: Số thẻ: %t | Hạn dùng: %t | CVV: %t\n", cardFilled, expiryFilled, cvvFilled)
+	return nil
+}
+
+// applyDiscountCode tìm ô name="reductions", xoá sạch dữ liệu, nhập mã giảm giá và bấm Apply
+func applyDiscountCode(page *rod.Page, discountCode string) error {
+	discountCode = strings.TrimSpace(discountCode)
+	if discountCode == "" {
+		return nil
+	}
+
+	log.Println("==================================================")
+	log.Printf("-> [BƯỚC 7] ĐANG NHẬP VÀ ÁP DỤNG MÃ GIẢM GIÁ: '%s' (name=\"reductions\")...\n", discountCode)
+	log.Println("==================================================")
+
+	startTime := time.Now()
+	timeout := 20 * time.Second
+
+	for time.Since(startTime) < timeout {
+		// 1. Nếu khung nhập giảm giá bị ẩn trong accordion / toggle, bấm mở
+		_, _ = page.Eval(`() => {
+			const toggles = Array.from(document.querySelectorAll('button, a, summary, [role="button"]'));
+			for (const t of toggles) {
+				const text = (t.innerText || t.textContent || '').trim().toLowerCase();
+				const aria = (t.getAttribute('aria-label') || '').toLowerCase();
+				if (text.includes('discount') || text.includes('gift card') || text.includes('promo') || aria.includes('discount')) {
+					const rect = t.getBoundingClientRect();
+					if (rect.width > 0 && rect.height > 0) {
+						t.click();
+						break;
+					}
+				}
+			}
+		}`)
+		time.Sleep(300 * time.Millisecond)
+
+		// 2. Tìm ô nhập name="reductions"
+		var reductionsInput *rod.Element
+		selectors := []string{
+			`input[name="reductions"]`,
+			`input#reductions`,
+			`input[name*="reduction"]`,
+			`input[placeholder*="Discount"]`,
+			`input[placeholder*="gift card"]`,
+			`input[placeholder*="Promo"]`,
+			`input[aria-label*="Discount"]`,
+		}
+
+		for _, sel := range selectors {
+			el, err := page.Element(sel)
+			if err == nil && el != nil {
+				vis, _ := el.Visible()
+				if vis {
+					reductionsInput = el
+					break
+				}
+			}
+		}
+
+		if reductionsInput != nil {
+			_ = reductionsInput.ScrollIntoView()
+			time.Sleep(150 * time.Millisecond)
+			_ = reductionsInput.Click(proto.InputMouseButtonLeft, 1)
+			time.Sleep(100 * time.Millisecond)
+
+			// Xoá sạch dữ liệu cũ
+			_ = reductionsInput.SelectAllText()
+			_ = page.Keyboard.Press(input.ControlLeft)
+			_ = page.Keyboard.Press(input.KeyA)
+			_ = page.Keyboard.Release(input.ControlLeft)
+			_ = page.Keyboard.Press(input.Backspace)
+			_, _ = reductionsInput.Eval(`() => { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); }`)
+			time.Sleep(100 * time.Millisecond)
+
+			// Gõ mã giảm giá
+			for _, ch := range discountCode {
+				_ = reductionsInput.Input(string(ch))
+				delay := 25 + rand.Intn(30)
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+			}
+			time.Sleep(300 * time.Millisecond)
+
+			// Gửi phím Enter
+			_ = page.Keyboard.Press(input.Enter)
+			time.Sleep(500 * time.Millisecond)
+
+			// Tìm và bấm nút Apply
+			_, _ = page.Eval(`() => {
+				const inp = document.querySelector('input[name="reductions"], input#reductions, input[placeholder*="Discount"]');
+				if (inp) {
+					const form = inp.closest('form') || inp.parentElement || inp.closest('div');
+					if (form) {
+						const btn = form.querySelector('button[type="submit"], button[aria-label*="Apply"], button');
+						if (btn && typeof btn.click === 'function') {
+							btn.click();
+							return true;
+						}
+					}
+				}
+				const allBtns = Array.from(document.querySelectorAll('button'));
+				for (const b of allBtns) {
+					const t = (b.innerText || b.textContent || '').trim().toLowerCase();
+					const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+					if (t === 'apply' || t.startsWith('apply') || aria.includes('apply')) {
+						b.click();
+						return true;
+					}
+				}
+				return false;
+			}`)
+
+			log.Printf("-> ĐÃ NHẬP VÀ BẤM ÁP DỤNG MÃ GIẢM GIÁ '%s' THÀNH CÔNG!\n", discountCode)
+			time.Sleep(2 * time.Second)
+			return nil
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	log.Println("[!] Không tìm thấy ô nhập mã giảm giá name='reductions'.")
+	return fmt.Errorf("không tìm thấy ô reductions")
+}
+
+// clickPayNowButton tìm và bấm nút thanh toán (Pay now / Complete order / Place order)
+func clickPayNowButton(page *rod.Page) (bool, string) {
+	payRes, err := page.Eval(`() => {
+		function isVisible(el) {
+			if (!el) return false;
+			const style = window.getComputedStyle(el);
+			if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+			const rect = el.getBoundingClientRect();
+			return rect.width > 20 && rect.height > 15 && !el.disabled;
+		}
+
+		const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'));
+		for (const b of allBtns) {
+			if (!isVisible(b)) continue;
+			const text = (b.innerText || b.textContent || b.value || '').trim().toLowerCase();
+			const id = (b.id || '').toLowerCase();
+			const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+
+			if (text === 'pay now' || text.includes('pay now') ||
+			    text === 'complete order' || text.includes('complete order') ||
+			    text === 'place order' || text.includes('place order') ||
+			    id.includes('pay-button') || aria.includes('pay now')) {
+				b.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				b.click();
+				b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+				return { clicked: true, text: (b.innerText || b.textContent || 'Pay now').trim() };
+			}
+		}
+
+		return { clicked: false, text: '' };
+	}`)
+
+	if err == nil && payRes != nil && payRes.Value.Get("clicked").Bool() {
+		btnName := payRes.Value.Get("text").String()
+		return true, btnName
+	}
+
+	// Fallback CDP Element Click
+	payBtn, err := page.Element(`button#checkout-pay-button, button[id*="pay-button"], button[type="submit"]`)
+	if err == nil && payBtn != nil {
+		vis, _ := payBtn.Visible()
+		if vis {
+			_ = payBtn.ScrollIntoView()
+			time.Sleep(150 * time.Millisecond)
+			_ = payBtn.Click(proto.InputMouseButtonLeft, 1)
+			return true, "Pay now"
+		}
+	}
+
+	return false, ""
+}
+
+// extractOrderSummaryAndPayNow kiểm tra giá tiền đã giảm và bấm Pay now (nhập lại thẻ trước khi thử lại tối đa 2 lần)
+func extractOrderSummaryAndPayNow(page *rod.Page, profile *UserProfile) error {
+	log.Println("==================================================")
+	log.Println("-> [BƯỚC 8] ĐANG ĐỢI CẬP NHẬT GIÁ VÀ BẤM 'PAY NOW'...")
+	log.Println("==================================================")
+
+	// 1. Chờ hệ thống Shopify cập nhật bảng giá và tính toán mã giảm giá
+	log.Println("-> Đang đợi hệ thống cập nhật tổng tiền thanh toán...")
+	time.Sleep(4 * time.Second)
+
+	// 2. Trích xuất thông tin giá tiền (Subtotal, Discount, Total)
+	priceRes, err := page.Eval(`() => {
+		let total = '';
+		let discount = '';
+
+		// Tìm phần tử Total price
+		const totalEls = Array.from(document.querySelectorAll('[data-checkout-payment-due-target], strong[class*="total"], span[class*="total"], [aria-label*="Total"], [class*="payment-due"], [class*="final-price"]'));
+		for (const el of totalEls) {
+			const t = (el.innerText || el.textContent || '').trim();
+			if (t.includes('$')) {
+				total = t;
+				break;
+			}
+		}
+
+		// Nếu chưa thấy, quét các phần tử trong summary
+		if (!total) {
+			const summary = document.querySelector('aside, [role="complementary"], [class*="order-summary"], [class*="summary"], main');
+			if (summary) {
+				const spans = Array.from(summary.querySelectorAll('span, strong, em, div'));
+				for (let i = spans.length - 1; i >= 0; i--) {
+					const t = (spans[i].innerText || '').trim();
+					if (t.startsWith('$') && t.length <= 15) {
+						total = t;
+						break;
+					}
+				}
+			}
+		}
+
+		// Tìm Discount amount
+		const discEls = Array.from(document.querySelectorAll('[class*="reduction"], [class*="discount"], [class*="tag"], [class*="badge"]'));
+		for (const el of discEls) {
+			const t = (el.innerText || el.textContent || '').trim();
+			if (t.includes('$') || t.includes('-') || t.includes('%')) {
+				discount += (discount ? ' | ' : '') + t;
+			}
+		}
+
+		return { total, discount };
+	}`)
+
+	if err == nil && priceRes != nil {
+		total := priceRes.Value.Get("total").String()
+		discount := priceRes.Value.Get("discount").String()
+
+		log.Println("--------------------------------------------------")
+		if total != "" {
+			log.Printf("-> [TỔNG TIỀN PHẢI TRẢ]: %s\n", total)
+		} else {
+			log.Println("-> [TỔNG TIỀN PHẢI TRẢ]: Đã cập nhật trên giao diện thanh toán")
+		}
+		if discount != "" {
+			log.Printf("-> [THÔNG TIN GIẢM GIÁ]: %s\n", discount)
+		}
+		log.Println("--------------------------------------------------")
+	}
+
+	// 3. Thực hiện bấm nút "Pay now" (Thử tối đa 3 lần: lần 1 + 2 lần retry có nhập lại thẻ)
+	maxRetries := 2
+	for attempt := 1; attempt <= 1+maxRetries; attempt++ {
+		if attempt > 1 {
+			log.Println("==================================================")
+			log.Printf("-> [RETRY %d/%d] Đang nhập lại toàn bộ thông tin thẻ tín dụng trước khi bấm Pay now...\n", attempt-1, maxRetries)
+			log.Println("==================================================")
+			_ = fillPaymentCardForm(page, profile)
+			time.Sleep(1 * time.Second)
+		}
+
+		// Chờ ngẫu nhiên 3 đến 6 giây trước khi bấm Pay now
+		randomWait := 3 + rand.Intn(4) // 3, 4, 5, hoặc 6 giây
+		log.Printf("-> Đang chờ ngẫu nhiên %d giây (3-6s) trước khi bấm Pay now...\n", randomWait)
+		time.Sleep(time.Duration(randomWait) * time.Second)
+
+		log.Printf("-> Đang kiểm tra và bấm nút 'Pay now' (Lần %d/%d)...\n", attempt, 1+maxRetries)
+		clicked, btnName := clickPayNowButton(page)
+		if clicked {
+			log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d)!\n", btnName, attempt)
+		} else {
+			log.Println("-> Nút thanh toán không còn hiển thị (đơn hàng đang được xử lý hoặc đã chuyển trang thành công).")
+			break
+		}
+
+		log.Println("-> Đang đợi hệ thống phản hồi kết quả thanh toán...")
+		time.Sleep(5 * time.Second)
+
+		// Kiểm tra nếu trang đã chuyển hướng sang trang hoàn tất
+		info, _ := page.Info()
+		if info != nil {
+			urlLower := strings.ToLower(info.URL)
+			if strings.Contains(urlLower, "thank_you") || strings.Contains(urlLower, "orders") || strings.Contains(urlLower, "order-received") {
+				log.Printf("-> ĐÃ CHUYỂN HƯỚNG SANG TRANG XÁC NHẬN ĐƠN HÀNG THÀNH CÔNG!\n-> URL: %s\n", info.URL)
+				break
+			}
+		}
+	}
+
+	return nil
 }
