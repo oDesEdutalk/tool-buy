@@ -724,18 +724,15 @@ func humanType(page *rod.Page, el *rod.Element, text string) error {
 	}
 
 	_ = el.ScrollIntoView()
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	_ = el.Click(proto.InputMouseButtonLeft, 1)
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	_ = el.SelectAllText()
 
 	for _, ch := range text {
-		err := el.Input(string(ch))
-		if err != nil {
-			_ = page.InsertText(string(ch))
-		}
-		delay := 35 + rand.Intn(50)
+		_ = el.Input(string(ch))
+		delay := 25 + rand.Intn(35)
 		time.Sleep(time.Duration(delay) * time.Millisecond)
 	}
 
@@ -748,7 +745,7 @@ func humanType(page *rod.Page, el *rod.Element, text string) error {
 		}
 	}`, text)
 
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	return nil
 }
 
@@ -1120,7 +1117,7 @@ func handleLocalSocksConn(client net.Conn, dialer proxy.Dialer) {
 
 // ensurePaymentSectionVisible cuộn tới phần thanh toán và đảm bảo đã chọn Credit Card
 func ensurePaymentSectionVisible(page *rod.Page) {
-	log.Println("-> [BƯỚC 6.1] Đang cuộn xuống và chọn phương thức thanh toán Credit card...")
+	log.Println("-> [BƯỚC 7.1] Đang cuộn xuống và chọn phương thức thanh toán Credit card...")
 
 	_, _ = page.Eval(`() => {
 		// 1. Tìm heading hoặc container Payment / Credit card
@@ -1186,103 +1183,40 @@ func maskSecret(fieldName, val string) string {
 	return val
 }
 
-// runeToKey chuyển đổi ký tự sang input.Key để gửi sự kiện bàn phím thật
-func runeToKey(r rune) (input.Key, bool) {
-	switch r {
-	case '0':
-		return input.Digit0, true
-	case '1':
-		return input.Digit1, true
-	case '2':
-		return input.Digit2, true
-	case '3':
-		return input.Digit3, true
-	case '4':
-		return input.Digit4, true
-	case '5':
-		return input.Digit5, true
-	case '6':
-		return input.Digit6, true
-	case '7':
-		return input.Digit7, true
-	case '8':
-		return input.Digit8, true
-	case '9':
-		return input.Digit9, true
-	case ' ':
-		return input.Space, true
-	case '/':
-		return input.Slash, true
-	default:
-		return 0, false
-	}
-}
-
-// fillShopifyCardField tìm chính xác iframe và gõ dữ liệu thẻ nhanh chóng, không bị block
-func fillShopifyCardField(page *rod.Page, fieldKind string, fieldName string, value string) bool {
+// fillFieldByExactSelector tìm chính xác ô input qua selector trong các Iframes hoặc Trang chính và điền trực tiếp
+func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string, value string) bool {
 	if strings.TrimSpace(value) == "" {
-		return false
+		return true
 	}
 
-	log.Printf("-> Đang tìm và nhập %s: '%s'...\n", fieldName, maskSecret(fieldName, value))
+	log.Printf("-> Đang tìm và điền %s (%s): '%s'...\n", fieldName, selector, maskSecret(fieldName, value))
+	isExpiry := strings.Contains(selector, "expiry") || strings.Contains(strings.ToLower(fieldName), "hạn")
 
-	// 1. Dùng JavaScript xác định chính xác vị trí và ID của iframe trong 5ms
-	coordRes, err := page.Eval(`(kind) => {
-		const ifrs = Array.from(document.querySelectorAll('iframe'));
-		for (const ifr of ifrs) {
-			const id = (ifr.id || '').toLowerCase();
-			const name = (ifr.name || '').toLowerCase();
-			const title = (ifr.getAttribute('title') || '').toLowerCase();
-			const src = (ifr.src || '').toLowerCase();
-			const all = id + ' ' + name + ' ' + title + ' ' + src;
-
-			let matched = false;
-			if (kind === 'number') {
-				matched = (id.includes('number') || name.includes('number') || title.includes('card number') || src.includes('number')) && !all.includes('phone');
-			} else if (kind === 'expiry') {
-				matched = id.includes('exp') || name.includes('exp') || title.includes('exp') || src.includes('exp');
-			} else if (kind === 'cvv') {
-				matched = id.includes('verification') || id.includes('security') || id.includes('cvv') || id.includes('cvc') ||
-				          name.includes('verification') || title.includes('security') || title.includes('cvv') || src.includes('verification');
-			} else if (kind === 'name') {
-				matched = (id.includes('name') || name.includes('name') || title.includes('name')) && !all.includes('first') && !all.includes('last');
+	// 1. Quét qua tất cả iframes trên trang
+	iframes, err := page.Elements("iframe")
+	if err == nil {
+		for idx, ifr := range iframes {
+			frame, err := ifr.Frame()
+			if err != nil || frame == nil {
+				continue
 			}
 
-			if (matched) {
-				ifr.scrollIntoView({ behavior: 'instant', block: 'center' });
-				const rect = ifr.getBoundingClientRect();
-				if (rect.width > 10 && rect.height > 10) {
-					return {
-						found: true,
-						id: ifr.id || '',
-						x: rect.left + rect.width / 2,
-						y: rect.top + rect.height / 2
-					};
-				}
-			}
-		}
-		return { found: false, id: '', x: 0, y: 0 };
-	}`, fieldKind)
+			// Kiểm tra selector trong frame bằng Eval siêu tốc
+			hasRes, err := frame.Eval(`(sel) => {
+				const el = document.querySelector(sel);
+				return !!el;
+			}`, selector)
 
-	if err != nil || coordRes == nil || !coordRes.Value.Get("found").Bool() {
-		log.Printf("[!] Không tìm thấy khung iframe cho %s\n", fieldName)
-		return false
-	}
-
-	x := coordRes.Value.Get("x").Num()
-	y := coordRes.Value.Get("y").Num()
-	ifrId := coordRes.Value.Get("id").String()
-
-	// 2. Thử nhập qua Frame DOM nếu lấy được (Timeout cực ngắn 800ms)
-	if ifrId != "" {
-		ifrEl, err := page.Timeout(800 * time.Millisecond).Element("#" + ifrId)
-		if err == nil && ifrEl != nil {
-			frame, err := ifrEl.Frame()
-			if err == nil && frame != nil {
-				hasInp, inp, _ := frame.Timeout(600 * time.Millisecond).Has("input")
-				if hasInp && inp != nil {
+			if err == nil && hasRes != nil && hasRes.Value.Bool() {
+				log.Printf("-> [Iframe #%d] Bắt trúng %s theo selector '%s'!\n", idx, fieldName, selector)
+				inp, err := frame.Element(selector)
+				if err == nil && inp != nil {
+					_ = inp.ScrollIntoView()
 					_ = inp.Focus()
 					_ = inp.Click(proto.InputMouseButtonLeft, 1)
+					time.Sleep(50 * time.Millisecond)
+
+					// Xoá nội dung cũ
 					_ = inp.SelectAllText()
 					_ = frame.Keyboard.Press(input.ControlLeft)
 					_ = frame.Keyboard.Press(input.KeyA)
@@ -1291,8 +1225,10 @@ func fillShopifyCardField(page *rod.Page, fieldKind string, fieldName string, va
 					for i := 0; i < 15; i++ {
 						_ = frame.Keyboard.Press(input.Backspace)
 					}
+					time.Sleep(50 * time.Millisecond)
 
-					if fieldKind == "expiry" {
+					// Gõ giá trị
+					if isExpiry {
 						cleanDigits := ""
 						for _, r := range value {
 							if r >= '0' && r <= '9' {
@@ -1300,100 +1236,121 @@ func fillShopifyCardField(page *rod.Page, fieldKind string, fieldName string, va
 							}
 						}
 						if len(cleanDigits) == 4 {
-							_ = inp.Input(cleanDigits[:2])
-							time.Sleep(150 * time.Millisecond)
-							_ = inp.Input(cleanDigits[2:])
+							// 1. Gõ 2 số tháng (MM)
+							_ = inp.Input(string(cleanDigits[0]))
+							time.Sleep(40 * time.Millisecond)
+							_ = inp.Input(string(cleanDigits[1]))
+
+							// 2. Chờ nửa giây (500ms) để mask Shopify tự chèn " / "
+							time.Sleep(500 * time.Millisecond)
+
+							// 3. Gõ 2 số năm (YY)
+							_ = inp.Input(string(cleanDigits[2]))
+							time.Sleep(40 * time.Millisecond)
+							_ = inp.Input(string(cleanDigits[3]))
+							time.Sleep(100 * time.Millisecond)
 						} else {
-							_ = inp.Input(value)
+							for _, ch := range value {
+								_ = inp.Input(string(ch))
+								time.Sleep(35 * time.Millisecond)
+							}
 						}
 					} else {
 						for _, ch := range value {
 							_ = inp.Input(string(ch))
-							time.Sleep(30 * time.Millisecond)
+							time.Sleep(35 * time.Millisecond)
 						}
+						time.Sleep(50 * time.Millisecond)
+
+						// Set giá trị và kích hoạt sự kiện DOM trong Frame
+						_, _ = frame.Eval(`(sel, val) => {
+							const el = document.querySelector(sel);
+							if (el) {
+								el.value = val;
+								el.dispatchEvent(new Event('input', { bubbles: true }));
+								el.dispatchEvent(new Event('change', { bubbles: true }));
+							}
+						}`, selector, value)
 					}
 
-					_, _ = inp.Eval(`function() {
-						this.dispatchEvent(new Event('input', { bubbles: true }));
-						this.dispatchEvent(new Event('change', { bubbles: true }));
-					}`)
-
-					valCheck, err := inp.Eval(`function() { return (this.value || '').trim(); }`)
-					if err == nil && valCheck != nil && valCheck.Value.String() != "" {
-						log.Printf("-> [Frame DOM] Đã gõ thành công %s (Đã lưu: '%s')!\n", fieldName, maskSecret(fieldName, valCheck.Value.String()))
-						return true
-					}
+					log.Printf("-> ĐÃ ĐIỀN THÀNH CÔNG %s!\n", fieldName)
+					return true
 				}
 			}
 		}
 	}
 
-	// 3. Fallback tức thì: Click chuột CDP vào tọa độ iframe + Bàn phím Native
-	log.Printf("-> [CDP Click + Keystrokes] Click tại toạ độ (%.1f, %.1f) và gõ phím Native cho %s...\n", x, y, fieldName)
-	_ = page.Mouse.MoveLinear(proto.Point{X: x, Y: y}, 2)
-	time.Sleep(50 * time.Millisecond)
-	_ = page.Mouse.Click(proto.InputMouseButtonLeft, 1)
-	time.Sleep(80 * time.Millisecond)
+	// 2. Nếu nằm trên trang chính
+	hasMain, _ := page.Eval(`(sel) => {
+		const el = document.querySelector(sel);
+		return !!el;
+	}`, selector)
 
-	// Xoá nội dung cũ
-	_ = page.Keyboard.Press(input.ControlLeft)
-	_ = page.Keyboard.Press(input.KeyA)
-	_ = page.Keyboard.Release(input.ControlLeft)
-	_ = page.Keyboard.Press(input.Backspace)
-	for i := 0; i < 15; i++ {
-		_ = page.Keyboard.Press(input.Backspace)
-	}
-	time.Sleep(50 * time.Millisecond)
+	if hasMain != nil && hasMain.Value.Bool() {
+		inp, err := page.Element(selector)
+		if err == nil && inp != nil {
+			log.Printf("-> [Main DOM] Bắt trúng %s trên trang chính!\n", fieldName)
+			_ = inp.ScrollIntoView()
+			_ = inp.Focus()
+			_ = inp.Click(proto.InputMouseButtonLeft, 1)
+			time.Sleep(50 * time.Millisecond)
 
-	// Gõ phím Native
-	if fieldKind == "expiry" {
-		cleanDigits := ""
-		for _, r := range value {
-			if r >= '0' && r <= '9' {
-				cleanDigits += string(r)
+			_ = inp.SelectAllText()
+			_ = page.Keyboard.Press(input.ControlLeft)
+			_ = page.Keyboard.Press(input.KeyA)
+			_ = page.Keyboard.Release(input.ControlLeft)
+			_ = page.Keyboard.Press(input.Backspace)
+			for i := 0; i < 15; i++ {
+				_ = page.Keyboard.Press(input.Backspace)
 			}
-		}
-		if len(cleanDigits) == 4 {
-			for _, ch := range cleanDigits[:2] {
-				if k, ok := runeToKey(ch); ok {
-					_ = page.Keyboard.Press(k)
-				} else {
-					_ = page.InsertText(string(ch))
+			time.Sleep(50 * time.Millisecond)
+
+			if isExpiry {
+				cleanDigits := ""
+				for _, r := range value {
+					if r >= '0' && r <= '9' {
+						cleanDigits += string(r)
+					}
 				}
-				time.Sleep(40 * time.Millisecond)
-			}
-			time.Sleep(150 * time.Millisecond)
-			for _, ch := range cleanDigits[2:] {
-				if k, ok := runeToKey(ch); ok {
-					_ = page.Keyboard.Press(k)
+				if len(cleanDigits) == 4 {
+					_ = inp.Input(string(cleanDigits[0]))
+					time.Sleep(40 * time.Millisecond)
+					_ = inp.Input(string(cleanDigits[1]))
+					time.Sleep(500 * time.Millisecond)
+					_ = inp.Input(string(cleanDigits[2]))
+					time.Sleep(40 * time.Millisecond)
+					_ = inp.Input(string(cleanDigits[3]))
+					time.Sleep(100 * time.Millisecond)
 				} else {
-					_ = page.InsertText(string(ch))
+					for _, ch := range value {
+						_ = inp.Input(string(ch))
+						time.Sleep(35 * time.Millisecond)
+					}
 				}
-				time.Sleep(40 * time.Millisecond)
-			}
-		} else {
-			for _, ch := range value {
-				if k, ok := runeToKey(ch); ok {
-					_ = page.Keyboard.Press(k)
-				} else {
-					_ = page.InsertText(string(ch))
-				}
-				time.Sleep(40 * time.Millisecond)
-			}
-		}
-	} else {
-		for _, ch := range value {
-			if k, ok := runeToKey(ch); ok {
-				_ = page.Keyboard.Press(k)
 			} else {
-				_ = page.InsertText(string(ch))
+				for _, ch := range value {
+					_ = inp.Input(string(ch))
+					time.Sleep(35 * time.Millisecond)
+				}
+				time.Sleep(50 * time.Millisecond)
+
+				_, _ = page.Eval(`(sel, val) => {
+					const el = document.querySelector(sel);
+					if (el) {
+						el.value = val;
+						el.dispatchEvent(new Event('input', { bubbles: true }));
+						el.dispatchEvent(new Event('change', { bubbles: true }));
+					}
+				}`, selector, value)
 			}
-			time.Sleep(35 * time.Millisecond)
+
+			log.Printf("-> ĐÃ ĐIỀN THÀNH CÔNG %s TRÊN TRANG CHÍNH!\n", fieldName)
+			return true
 		}
 	}
 
-	log.Printf("-> [CDP Click + Keystrokes] Đã gõ xong %s thành công!\n", fieldName)
-	return true
+	log.Printf("[!] Không tìm thấy ô nhập cho %s theo selector: %s\n", fieldName, selector)
+	return false
 }
 
 // fillPaymentCardForm thực hiện toàn bộ quy trình điền thẻ tín dụng (Card Number, Expiry, CVV, Name)
@@ -1404,7 +1361,7 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	}
 
 	log.Println("==================================================")
-	log.Println("-> [BƯỚC 6] BẮT ĐẦU ĐIỀN THÔNG TIN THẺ TÍN DỤNG...")
+	log.Println("-> [BƯỚC 7] BẮT ĐẦU ĐIỀN THÔNG TIN THẺ TÍN DỤNG...")
 	log.Println("==================================================")
 
 	ensurePaymentSectionVisible(page)
@@ -1423,54 +1380,32 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	log.Printf("-> Dữ liệu thẻ cần điền: Số thẻ: %s | Hạn: %s/%s (%s) | CVV: %s\n",
 		maskSecret("card", profile.CardNumber), expMonth, expYear, expCombined, maskSecret("cvv", profile.CVV))
 
-	startTime := time.Now()
-	timeout := 40 * time.Second
+	// 1. Điền Số thẻ: id="number" hoặc name="number"
+	cardOk := fillFieldByExactSelector(page, "Số thẻ (Card Number)", `input#number, input[name="number"]`, profile.CardNumber)
+	time.Sleep(300 * time.Millisecond)
 
-	cardFilled := false
-	expiryFilled := false
-	cvvFilled := false
+	// 2. Điền Ngày hết hạn: id="expiry" hoặc name="expiry"
+	expiryOk := fillFieldByExactSelector(page, "Hạn dùng (Expiration Date)", `input#expiry, input[name="expiry"]`, expCombined)
+	time.Sleep(300 * time.Millisecond)
 
-	for time.Since(startTime) < timeout {
-		// 1. Điền Số thẻ
-		if !cardFilled {
-			cardFilled = fillShopifyCardField(page, "number", "Số thẻ (Card Number)", profile.CardNumber)
-			if cardFilled {
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
+	// 3. Điền CVV: id="verification_value" hoặc name="verification_value"
+	cvvOk := fillFieldByExactSelector(page, "Mã bảo mật (CVV)", `input#verification_value, input[name="verification_value"]`, profile.CVV)
+	time.Sleep(300 * time.Millisecond)
 
-		// 2. Điền Ngày hết hạn
-		if !expiryFilled {
-			expiryFilled = fillShopifyCardField(page, "expiry", "Hạn dùng (Expiration Date)", expCombined)
-			if expiryFilled {
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
-
-		// 3. Điền CVV
-		if !cvvFilled {
-			cvvFilled = fillShopifyCardField(page, "cvv", "Mã bảo mật (CVV/Security Code)", profile.CVV)
-			if cvvFilled {
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
-
-		// 4. Điền Tên trên thẻ nếu có
-		if profile.FullName != "" {
-			fillShopifyCardField(page, "name", "Tên trên thẻ (Name on Card)", profile.FullName)
-		}
-
-		if cardFilled && expiryFilled && cvvFilled {
-			log.Println("==================================================")
-			log.Println("-> ĐÃ HOÀN TẤT NHẬP CHÍNH XÁC TOÀN BỘ THẺ TÍN DỤNG (Card Number, Expiry, CVV)!")
-			log.Println("==================================================")
-			return nil
-		}
-
-		time.Sleep(1 * time.Second)
+	// 4. Điền Tên trên thẻ nếu có ô Name on card: id="name" hoặc name="name"
+	if profile.FullName != "" {
+		fillFieldByExactSelector(page, "Tên trên thẻ (Name on Card)", `input#name, input[name="name"], input[placeholder*="Name on card" i]`, profile.FullName)
+		time.Sleep(200 * time.Millisecond)
 	}
 
-	log.Printf("[!] Kết quả điền thẻ: Số thẻ: %t | Hạn dùng: %t | CVV: %t\n", cardFilled, expiryFilled, cvvFilled)
+	if cardOk && expiryOk && cvvOk {
+		log.Println("==================================================")
+		log.Println("-> ĐÃ HOÀN TẤT NHẬP CHÍNH XÁC TOÀN BỘ THẺ TÍN DỤNG (#number, #expiry, #verification_value)!")
+		log.Println("==================================================")
+	} else {
+		log.Printf("[!] Trạng thái điền thẻ: Số thẻ=%t | Hạn=%t | CVV=%t\n", cardOk, expiryOk, cvvOk)
+	}
+
 	return nil
 }
 
