@@ -1164,10 +1164,44 @@ func maskSecret(fieldName, val string) string {
 	return val
 }
 
-// typeSlowlyCardField gõ từng ký tự từ từ để tránh lỗi mask tự động của Shopify (đặc biệt là ô expiry)
-func typeSlowlyCardField(inputFn func(ch string), elementId string, text string) {
-	if elementId == "expiry" {
-		// Chuẩn hoá chỉ lấy số
+// runeToKey chuyển đổi ký tự sang input.Key để gửi sự kiện bàn phím thật
+func runeToKey(r rune) (input.Key, bool) {
+	switch r {
+	case '0':
+		return input.Digit0, true
+	case '1':
+		return input.Digit1, true
+	case '2':
+		return input.Digit2, true
+	case '3':
+		return input.Digit3, true
+	case '4':
+		return input.Digit4, true
+	case '5':
+		return input.Digit5, true
+	case '6':
+		return input.Digit6, true
+	case '7':
+		return input.Digit7, true
+	case '8':
+		return input.Digit8, true
+	case '9':
+		return input.Digit9, true
+	case '/':
+		return input.Slash, true
+	case ' ':
+		return input.Space, true
+	default:
+		return 0, false
+	}
+}
+
+// typeCardFieldCarefully gõ dữ liệu thẻ cẩn thận bằng sự kiện bàn phím thực và xử lý mask Expiration Date của Shopify
+// typeLikeHuman gõ từng ký tự một như người thật, không gán value trực tiếp
+func typeLikeHuman(targetPage *rod.Page, el *rod.Element, elementId string, text string) {
+	isExpiry := elementId == "expiry" || strings.Contains(elementId, "exp")
+
+	if isExpiry {
 		cleanDigits := ""
 		for _, r := range text {
 			if r >= '0' && r <= '9' {
@@ -1176,175 +1210,301 @@ func typeSlowlyCardField(inputFn func(ch string), elementId string, text string)
 		}
 
 		if len(cleanDigits) == 4 {
-			// 1. Gõ 2 số tháng MM (chậm 130-200ms)
-			for _, ch := range cleanDigits[:2] {
-				inputFn(string(ch))
-				delay := 130 + rand.Intn(70)
-				time.Sleep(time.Duration(delay) * time.Millisecond)
+			month := cleanDigits[:2]
+			year := cleanDigits[2:]
+
+			// 1. Gõ 2 số tháng MM
+			for _, ch := range month {
+				if el != nil {
+					_ = el.Input(string(ch))
+				} else if targetPage != nil {
+					_ = targetPage.InsertText(string(ch))
+				}
+				time.Sleep(time.Duration(110+rand.Intn(60)) * time.Millisecond)
 			}
 
-			// 2. Tạm dừng 400ms để Javascript / Shopify mask tự sinh dấu gạch chéo " / " và dời con trỏ
-			time.Sleep(400 * time.Millisecond)
+			// Tạm dừng 250ms để mask Shopify tự format "/"
+			time.Sleep(250 * time.Millisecond)
 
-			// 3. Gõ 2 số năm YY (chậm 130-200ms)
-			for _, ch := range cleanDigits[2:] {
-				inputFn(string(ch))
-				delay := 130 + rand.Intn(70)
-				time.Sleep(time.Duration(delay) * time.Millisecond)
+			// 2. Gõ 2 số năm YY
+			for _, ch := range year {
+				if el != nil {
+					_ = el.Input(string(ch))
+				} else if targetPage != nil {
+					_ = targetPage.InsertText(string(ch))
+				}
+				time.Sleep(time.Duration(110+rand.Intn(60)) * time.Millisecond)
 			}
 			return
 		}
 	}
 
-	// Các trường khác (number, verification_value, name) gõ tốc độ vừa phải 90-160ms/phím
+	// Gõ từng ký tự một như người thật cho Card Number, CVV, Name
 	for _, ch := range text {
-		inputFn(string(ch))
-		delay := 90 + rand.Intn(70)
+		if el != nil {
+			_ = el.Input(string(ch))
+		} else if targetPage != nil {
+			_ = targetPage.InsertText(string(ch))
+		}
+		delay := 90 + rand.Intn(60)
 		time.Sleep(time.Duration(delay) * time.Millisecond)
 	}
 }
 
-// fillCardFieldById tìm chính xác element theo ID cụ thể (#number, #expiry, #verification_value, #name)
+// fillCardFieldById tìm chính xác iframe và element tương ứng để nhập dữ liệu (#number, #expiry, #verification_value, #name)
 func fillCardFieldById(page *rod.Page, fieldName string, elementId string, text string) bool {
 	if strings.TrimSpace(text) == "" {
 		return false
 	}
 
-	selector := "#" + elementId
-	log.Printf("-> Đang tìm và gõ từ từ %s (id='%s'): '%s'...\n", fieldName, elementId, maskSecret(fieldName, text))
+	norm := strings.ToLower(fieldName + " " + elementId)
+	kindStr := "number"
+	if strings.Contains(norm, "cvv") || strings.Contains(norm, "verification") || strings.Contains(norm, "security") || strings.Contains(norm, "cvc") {
+		kindStr = "cvv"
+	} else if strings.Contains(norm, "expiry") || strings.Contains(norm, "expiration") || strings.Contains(norm, "hạn") {
+		kindStr = "expiry"
+	} else if strings.Contains(norm, "name") || strings.Contains(norm, "tên") {
+		kindStr = "name"
+	}
 
-	// 1. Quét qua tất cả Iframe Elements trên trang chính trước (chính xác và ổn định nhất)
+	log.Printf("-> Đang tìm và gõ %s (kind='%s'): '%s'...\n", fieldName, kindStr, maskSecret(fieldName, text))
+
+	// 1. Quét qua Browser Targets (OOPIF iframes của Shopify độc lập theo từng trường)
+	if browser := page.Browser(); browser != nil {
+		targets, err := browser.Pages()
+		if err == nil {
+			for _, target := range targets {
+				inputs, err := target.Elements("input")
+				if err == nil && len(inputs) > 0 {
+					for _, inp := range inputs {
+						matchRes, err := inp.Eval(`function(kind) {
+							const id = (this.id || '').toLowerCase();
+							const name = (this.name || '').toLowerCase();
+							const placeholder = (this.placeholder || '').toLowerCase();
+							const aria = (this.getAttribute('aria-label') || '').toLowerCase();
+							const autocomplete = (this.getAttribute('autocomplete') || '').toLowerCase();
+
+							if (kind === 'cvv') {
+								if (id === 'number' || id === 'expiry' || autocomplete === 'cc-number' || autocomplete === 'cc-exp') return false;
+								return id.includes('verification') || id.includes('cvv') || id.includes('cvc') || id.includes('security') ||
+								       name.includes('verification') || name.includes('cvv') || name.includes('cvc') || name.includes('security') ||
+								       placeholder.includes('security') || placeholder.includes('cvv') || placeholder.includes('cvc') ||
+								       aria.includes('security') || aria.includes('cvv') || aria.includes('cvc') || aria.includes('verification') ||
+								       autocomplete.includes('csc') || autocomplete.includes('cvv') || autocomplete.includes('cvc');
+							}
+							if (kind === 'number') {
+								if (id === 'verification_value' || id === 'expiry' || autocomplete === 'cc-csc' || autocomplete === 'cc-exp') return false;
+								return id.includes('number') || name.includes('number') || placeholder.includes('card number') ||
+								       aria.includes('card number') || autocomplete === 'cc-number';
+							}
+							if (kind === 'expiry') {
+								if (id === 'verification_value' || id === 'number' || autocomplete === 'cc-csc' || autocomplete === 'cc-number') return false;
+								return id.includes('exp') || name.includes('exp') || placeholder.includes('exp') || placeholder.includes('mm') ||
+								       aria.includes('exp') || autocomplete === 'cc-exp';
+							}
+							if (kind === 'name') {
+								return id.includes('name') || name.includes('name') || placeholder.includes('name') ||
+								       aria.includes('name on card') || autocomplete === 'cc-name';
+							}
+							return false;
+						}`, kindStr)
+
+						if err == nil && matchRes != nil && matchRes.Value.Bool() {
+							_ = inp.ScrollIntoView()
+							time.Sleep(100 * time.Millisecond)
+							_ = inp.Click(proto.InputMouseButtonLeft, 1)
+							time.Sleep(100 * time.Millisecond)
+
+							_ = inp.SelectAllText()
+							_ = target.Keyboard.Press(input.ControlLeft)
+							_ = target.Keyboard.Press(input.KeyA)
+							_ = target.Keyboard.Release(input.ControlLeft)
+							_ = target.Keyboard.Press(input.Backspace)
+							for k := 0; k < 20; k++ {
+								_ = target.Keyboard.Press(input.Backspace)
+							}
+							time.Sleep(100 * time.Millisecond)
+
+							typeLikeHuman(target, inp, elementId, text)
+							log.Printf("-> [OOPIF Target] Đã gõ từng ký tự thành công cho %s!\n", fieldName)
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Quét qua tất cả Iframe Elements trên trang chính
 	iframes, err := page.Elements("iframe")
 	if err == nil {
 		for idx, ifr := range iframes {
-			frame, err := ifr.Frame()
-			if err == nil && frame != nil {
-				els, err := frame.Elements(selector)
-				if err == nil && len(els) > 0 {
-					el := els[0]
-					_ = el.ScrollIntoView()
-					time.Sleep(150 * time.Millisecond)
-					_ = el.Click(proto.InputMouseButtonLeft, 1)
-					time.Sleep(150 * time.Millisecond)
-
-					// Xoá sạch dữ liệu cũ (Ctrl+A -> Backspace + chuỗi backspace dự phòng)
-					_ = el.SelectAllText()
-					_ = frame.Keyboard.Press(input.ControlLeft)
-					_ = frame.Keyboard.Press(input.KeyA)
-					_ = frame.Keyboard.Release(input.ControlLeft)
-					_ = frame.Keyboard.Press(input.Backspace)
-					for k := 0; k < 25; k++ {
-						_ = frame.Keyboard.Press(input.Backspace)
-					}
-					time.Sleep(150 * time.Millisecond)
-
-					// Gõ từ từ từng ký tự vào element
-					typeSlowlyCardField(func(ch string) {
-						_ = el.Input(ch)
-					}, elementId, text)
-
-					log.Printf("-> [Iframe Frame DOM] Đã nhập thành công %s qua id='%s' trong iframe #%d!\n", fieldName, elementId, idx)
-					return true
-				}
-			}
-
-			// B. Kiểm tra nếu Iframe có name/id chứa elementId
-			ifrRes, err := ifr.Eval(`function(targetId) {
+			// Kiểm tra xem iframe này có phải là container của trường tương ứng hay không
+			ifrMatchRes, _ := ifr.Eval(`function(kind) {
+				const title = (this.getAttribute('title') || '').toLowerCase();
 				const name = (this.getAttribute('name') || '').toLowerCase();
 				const id = (this.id || '').toLowerCase();
 				const src = (this.src || '').toLowerCase();
-				const title = (this.title || '').toLowerCase();
-				const combined = name + ' ' + id + ' ' + src + ' ' + title;
+				const all = title + ' ' + name + ' ' + id + ' ' + src;
 				const rect = this.getBoundingClientRect();
-				return {
-					matched: combined.includes(targetId),
-					visible: rect.width > 10 && rect.height > 10
-				};
-			}`, elementId)
+				const isVisible = rect.width > 5 && rect.height > 5;
 
-			if err == nil && ifrRes != nil && ifrRes.Value.Get("matched").Bool() && ifrRes.Value.Get("visible").Bool() {
+				if (kind === 'cvv') {
+					if (all.includes('card number') || all.includes('expiration date') || all.includes('-number-') || all.includes('-expiry-')) return { matched: false, isVisible };
+					const hasCVV = all.includes('security code') || all.includes('verification_value') || all.includes('cvv') || all.includes('cvc') || all.includes('security-code');
+					return { matched: hasCVV, isVisible };
+				}
+				if (kind === 'number') {
+					if (all.includes('security code') || all.includes('expiration date') || all.includes('-verification') || all.includes('-expiry-')) return { matched: false, isVisible };
+					const hasNum = all.includes('card number') || all.includes('card-fields-number') || all.includes('number');
+					return { matched: hasNum, isVisible };
+				}
+				if (kind === 'expiry') {
+					if (all.includes('card number') || all.includes('security code') || all.includes('-number-') || all.includes('-verification')) return { matched: false, isVisible };
+					const hasExp = all.includes('expiration date') || all.includes('card-fields-expiry') || all.includes('expiry') || all.includes('exp');
+					return { matched: hasExp, isVisible };
+				}
+				if (kind === 'name') {
+					const hasName = all.includes('name on card') || all.includes('card-fields-name') || all.includes('cardholder');
+					return { matched: hasName, isVisible };
+				}
+				return { matched: false, isVisible };
+			}`, kindStr)
+
+			isIfrMatched := ifrMatchRes != nil && ifrMatchRes.Value.Get("matched").Bool()
+
+			frame, err := ifr.Frame()
+			if err == nil && frame != nil {
+				inputs, err := frame.Elements("input")
+				if err == nil && len(inputs) > 0 {
+					for _, inp := range inputs {
+						matchRes, err := inp.Eval(`function(kind) {
+							const id = (this.id || '').toLowerCase();
+							const name = (this.name || '').toLowerCase();
+							const placeholder = (this.placeholder || '').toLowerCase();
+							const aria = (this.getAttribute('aria-label') || '').toLowerCase();
+							const autocomplete = (this.getAttribute('autocomplete') || '').toLowerCase();
+
+							if (kind === 'cvv') {
+								if (id === 'number' || id === 'expiry' || autocomplete === 'cc-number' || autocomplete === 'cc-exp') return false;
+								return id.includes('verification') || id.includes('cvv') || id.includes('cvc') || id.includes('security') ||
+								       name.includes('verification') || name.includes('cvv') || name.includes('cvc') || name.includes('security') ||
+								       placeholder.includes('security') || placeholder.includes('cvv') || placeholder.includes('cvc') ||
+								       aria.includes('security') || aria.includes('cvv') || aria.includes('cvc') || aria.includes('verification') ||
+								       autocomplete.includes('csc') || autocomplete.includes('cvv') || autocomplete.includes('cvc');
+							}
+							if (kind === 'number') {
+								if (id === 'verification_value' || id === 'expiry' || autocomplete === 'cc-csc' || autocomplete === 'cc-exp') return false;
+								return id.includes('number') || name.includes('number') || placeholder.includes('card number') ||
+								       aria.includes('card number') || autocomplete === 'cc-number';
+							}
+							if (kind === 'expiry') {
+								if (id === 'verification_value' || id === 'number' || autocomplete === 'cc-csc' || autocomplete === 'cc-number') return false;
+								return id.includes('exp') || name.includes('exp') || placeholder.includes('exp') || placeholder.includes('mm') ||
+								       aria.includes('exp') || autocomplete === 'cc-exp';
+							}
+							if (kind === 'name') {
+								return id.includes('name') || name.includes('name') || placeholder.includes('name') ||
+								       aria.includes('name on card') || autocomplete === 'cc-name';
+							}
+							return false;
+						}`, kindStr)
+
+						if err == nil && matchRes != nil && matchRes.Value.Bool() {
+							_ = inp.ScrollIntoView()
+							time.Sleep(100 * time.Millisecond)
+							_ = inp.Click(proto.InputMouseButtonLeft, 1)
+							time.Sleep(100 * time.Millisecond)
+
+							_ = inp.SelectAllText()
+							_ = frame.Keyboard.Press(input.ControlLeft)
+							_ = frame.Keyboard.Press(input.KeyA)
+							_ = frame.Keyboard.Release(input.ControlLeft)
+							_ = frame.Keyboard.Press(input.Backspace)
+							for k := 0; k < 20; k++ {
+								_ = frame.Keyboard.Press(input.Backspace)
+							}
+							time.Sleep(100 * time.Millisecond)
+
+							typeLikeHuman(frame, inp, elementId, text)
+							log.Printf("-> [Iframe Frame DOM] Đã gõ từng ký tự thành công cho %s trong iframe #%d!\n", fieldName, idx)
+							return true
+						}
+					}
+				}
+			}
+
+			// Nếu frame DOM không lấy được nhưng Iframe Tag matched chính xác trường này (Click + Type)
+			if isIfrMatched && ifrMatchRes.Value.Get("isVisible").Bool() {
 				_ = ifr.ScrollIntoView()
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 				_ = ifr.Click(proto.InputMouseButtonLeft, 1)
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 				_ = page.Keyboard.Press(input.ControlLeft)
 				_ = page.Keyboard.Press(input.KeyA)
 				_ = page.Keyboard.Release(input.ControlLeft)
 				_ = page.Keyboard.Press(input.Backspace)
-				for k := 0; k < 25; k++ {
+				for k := 0; k < 20; k++ {
 					_ = page.Keyboard.Press(input.Backspace)
 				}
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 
-				typeSlowlyCardField(func(ch string) {
-					_ = page.InsertText(ch)
-				}, elementId, text)
-
-				log.Printf("-> [Iframe Click+Type] Đã nhập thành công %s vào iframe id='%s'!\n", fieldName, elementId)
+				typeLikeHuman(page, nil, elementId, text)
+				log.Printf("-> [Iframe Click+Type] Đã gõ từng ký tự thành công cho %s vào iframe container #%d!\n", fieldName, idx)
 				return true
 			}
 		}
 	}
 
-	// 2. Quét qua Browser Targets (Xử lý các target iframe độc lập OOPIF)
-	if browser := page.Browser(); browser != nil {
-		targets, err := browser.Pages()
-		if err == nil {
-			for _, target := range targets {
-				els, err := target.Elements(selector)
-				if err == nil && len(els) > 0 {
-					el := els[0]
-					_ = el.ScrollIntoView()
-					time.Sleep(150 * time.Millisecond)
-					_ = el.Click(proto.InputMouseButtonLeft, 1)
-					time.Sleep(150 * time.Millisecond)
-
-					_ = el.SelectAllText()
-					_ = target.Keyboard.Press(input.ControlLeft)
-					_ = target.Keyboard.Press(input.KeyA)
-					_ = target.Keyboard.Release(input.ControlLeft)
-					_ = target.Keyboard.Press(input.Backspace)
-					for k := 0; k < 25; k++ {
-						_ = target.Keyboard.Press(input.Backspace)
-					}
-					time.Sleep(150 * time.Millisecond)
-
-					typeSlowlyCardField(func(ch string) {
-						_ = el.Input(ch)
-					}, elementId, text)
-
-					log.Printf("-> [Target Element] Đã nhập thành công %s qua id='%s'!\n", fieldName, elementId)
-					return true
+	// 3. Quét trên Main Page DOM
+	inputs, err := page.Elements("input")
+	if err == nil && len(inputs) > 0 {
+		for _, inp := range inputs {
+			matchRes, err := inp.Eval(`function(kind) {
+				const id = (this.id || '').toLowerCase();
+				const name = (this.name || '').toLowerCase();
+				const placeholder = (this.placeholder || '').toLowerCase();
+				const aria = (this.getAttribute('aria-label') || '').toLowerCase();
+				const autocomplete = (this.getAttribute('autocomplete') || '').toLowerCase();
+				if (kind === 'cvv') {
+					if (id === 'number' || id === 'expiry') return false;
+					return id.includes('verification') || id.includes('cvv') || id.includes('security') || placeholder.includes('security') || placeholder.includes('cvv') || autocomplete.includes('csc');
 				}
+				if (kind === 'number') {
+					if (id === 'verification_value' || id === 'expiry') return false;
+					return id.includes('number') || name.includes('number') || autocomplete === 'cc-number';
+				}
+				if (kind === 'expiry') {
+					if (id === 'verification_value' || id === 'number') return false;
+					return id.includes('exp') || name.includes('exp') || autocomplete === 'cc-exp';
+				}
+				if (kind === 'name') {
+					return id.includes('name') || name.includes('name');
+				}
+				return false;
+			}`, kindStr)
+
+			if err == nil && matchRes != nil && matchRes.Value.Bool() {
+				_ = inp.ScrollIntoView()
+				time.Sleep(100 * time.Millisecond)
+				_ = inp.Click(proto.InputMouseButtonLeft, 1)
+				time.Sleep(100 * time.Millisecond)
+
+				_ = inp.SelectAllText()
+				_ = page.Keyboard.Press(input.ControlLeft)
+				_ = page.Keyboard.Press(input.KeyA)
+				_ = page.Keyboard.Release(input.ControlLeft)
+				_ = page.Keyboard.Press(input.Backspace)
+				for k := 0; k < 20; k++ {
+					_ = page.Keyboard.Press(input.Backspace)
+				}
+				time.Sleep(100 * time.Millisecond)
+
+				typeLikeHuman(page, inp, elementId, text)
+				log.Printf("-> [Main DOM] Đã gõ từng ký tự thành công cho %s trên trang chính!\n", fieldName)
+				return true
 			}
 		}
-	}
-
-	// 3. Quét trên Main Page DOM
-	els, err := page.Elements(selector)
-	if err == nil && len(els) > 0 {
-		el := els[0]
-		_ = el.ScrollIntoView()
-		time.Sleep(150 * time.Millisecond)
-		_ = el.Click(proto.InputMouseButtonLeft, 1)
-		time.Sleep(150 * time.Millisecond)
-
-		_ = el.SelectAllText()
-		_ = page.Keyboard.Press(input.ControlLeft)
-		_ = page.Keyboard.Press(input.KeyA)
-		_ = page.Keyboard.Release(input.ControlLeft)
-		_ = page.Keyboard.Press(input.Backspace)
-		for k := 0; k < 25; k++ {
-			_ = page.Keyboard.Press(input.Backspace)
-		}
-		time.Sleep(150 * time.Millisecond)
-
-		typeSlowlyCardField(func(ch string) {
-			_ = el.Input(ch)
-		}, elementId, text)
-
-		log.Printf("-> [Main DOM] Đã nhập thành công %s qua id='%s'!\n", fieldName, elementId)
-		return true
 	}
 
 	return false
