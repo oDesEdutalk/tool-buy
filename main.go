@@ -21,7 +21,7 @@ import (
 
 // DefaultProxy do người dùng cung cấp
 
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-10840789:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042532:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -184,6 +184,7 @@ func main() {
 	log.Printf("-> Mã giảm giá   : %s\n", *discountFlag)
 
 	l := launcher.New().
+		Leakless(false).
 		Headless(*headless).
 		Devtools(false)
 
@@ -368,7 +369,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		time.Sleep(800 * time.Millisecond)
 	} else {
 		log.Println("[!] Thử tìm ô Email qua JavaScript...")
-		_, _ = page.Eval(fmt.Sprintf(`(val) => {
+		_, _ = page.Eval(`(val) => {
 			const inputs = Array.from(document.querySelectorAll('input'));
 			for (const inp of inputs) {
 				const type = (inp.getAttribute('type') || '').toLowerCase();
@@ -384,7 +385,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 				}
 			}
 			return false;
-		}`, profile.Email))
+		}`, profile.Email)
 	}
 
 	// 3. Tìm và gõ First name
@@ -1197,7 +1198,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 		}
 	}()
 
-	log.Printf("-> Đang tìm và điền %s (%s): '%s'...\n", fieldName, selector, maskSecret(fieldName, value))
+	log.Printf("-> Đang gõ %s: '%s' (Human Typing)...\n", fieldName, maskSecret(fieldName, value))
 	isExpiry := strings.Contains(selector, "expiry") || strings.Contains(strings.ToLower(fieldName), "hạn")
 
 	// 1. Quét qua tất cả iframes trên trang
@@ -1224,7 +1225,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					_ = inp.ScrollIntoView()
 					_ = inp.Focus()
 					_ = inp.Click(proto.InputMouseButtonLeft, 1)
-					time.Sleep(50 * time.Millisecond)
+					time.Sleep(100 * time.Millisecond)
 
 					// Xoá nội dung cũ bằng phím tắt
 					_ = inp.SelectAllText()
@@ -1235,9 +1236,9 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					for i := 0; i < 15; i++ {
 						_ = frame.Keyboard.Press(input.Backspace)
 					}
-					time.Sleep(50 * time.Millisecond)
+					time.Sleep(80 * time.Millisecond)
 
-					// Gõ giá trị bằng phím
+					// Gõ giá trị bằng phím mô phỏng con người (Human Typing)
 					if isExpiry {
 						cleanDigits := ""
 						for _, r := range value {
@@ -1246,31 +1247,71 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 							}
 						}
 						if len(cleanDigits) == 4 {
-							// Gõ 2 số đầu (Tháng MM)
-							_ = inp.Input(string(cleanDigits[0]))
-							time.Sleep(50 * time.Millisecond)
-							_ = inp.Input(string(cleanDigits[1]))
+							month := cleanDigits[:2]
+							year := cleanDigits[2:]
 
-							// Dừng đúng 600ms để Shopify mask tự format " / "
-							time.Sleep(600 * time.Millisecond)
+							// 1. Gõ 2 số đầu (Tháng MM) với delay tự nhiên
+							_ = inp.Input(string(month[0]))
+							time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+							_ = inp.Input(string(month[1]))
+							time.Sleep(200 * time.Millisecond)
 
-							// Gõ 2 số sau (Năm YY)
-							_ = inp.Input(string(cleanDigits[2]))
-							time.Sleep(50 * time.Millisecond)
-							_ = inp.Input(string(cleanDigits[3]))
-							time.Sleep(100 * time.Millisecond)
+							// 2. Kiểm tra xem ô input có tự động chèn dấu '/' chưa
+							valRes, _ := frame.Eval(`(sel) => {
+								try {
+									const el = document.querySelector(sel);
+									return el ? (el.value || '') : '';
+								} catch(e) { return ''; }
+							}`, selector)
+
+							currentVal := ""
+							if valRes != nil {
+								currentVal = valRes.Value.String()
+							}
+
+							// Nếu hệ thống không tự chèn '/' thì ta chủ động gõ '/'
+							if !strings.Contains(currentVal, "/") {
+								_ = inp.Input("/")
+								time.Sleep(time.Duration(50+rand.Intn(30)) * time.Millisecond)
+							} else {
+								time.Sleep(time.Duration(150+rand.Intn(50)) * time.Millisecond)
+							}
+
+							// 3. Gõ 2 số sau (Năm YY) với delay tự nhiên
+							_ = inp.Input(string(year[0]))
+							time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+							_ = inp.Input(string(year[1]))
+							time.Sleep(150 * time.Millisecond)
+
+							// 4. Đảm bảo giá trị đã hợp lệ (có dấu '/') và kích hoạt đầy đủ các sự kiện validation
+							_, _ = frame.Eval(`(sel, mm, yy) => {
+								try {
+									const el = document.querySelector(sel);
+									if (el) {
+										let v = (el.value || '').trim();
+										if (!v.includes('/') || v === mm + yy) {
+											el.value = mm + ' / ' + yy;
+										}
+										el.dispatchEvent(new Event('input', { bubbles: true }));
+										el.dispatchEvent(new Event('change', { bubbles: true }));
+										el.dispatchEvent(new Event('blur', { bubbles: true }));
+									}
+								} catch(e) {}
+							}`, selector, month, year)
 						} else {
 							for _, ch := range value {
 								_ = inp.Input(string(ch))
-								time.Sleep(40 * time.Millisecond)
+								delay := 35 + rand.Intn(40)
+								time.Sleep(time.Duration(delay) * time.Millisecond)
 							}
 						}
 					} else {
 						for _, ch := range value {
 							_ = inp.Input(string(ch))
-							time.Sleep(40 * time.Millisecond)
+							delay := 35 + rand.Intn(45)
+							time.Sleep(time.Duration(delay) * time.Millisecond)
 						}
-						time.Sleep(50 * time.Millisecond)
+						time.Sleep(100 * time.Millisecond)
 
 						_, _ = frame.Eval(`(sel) => {
 							try {
@@ -1278,6 +1319,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 								if (el) {
 									el.dispatchEvent(new Event('input', { bubbles: true }));
 									el.dispatchEvent(new Event('change', { bubbles: true }));
+									el.dispatchEvent(new Event('blur', { bubbles: true }));
 								}
 							} catch(e) {}
 						}`, selector)
@@ -1305,7 +1347,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 			_ = inp.ScrollIntoView()
 			_ = inp.Focus()
 			_ = inp.Click(proto.InputMouseButtonLeft, 1)
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 
 			_ = inp.SelectAllText()
 			_ = page.Keyboard.Press(input.ControlLeft)
@@ -1315,7 +1357,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 			for i := 0; i < 15; i++ {
 				_ = page.Keyboard.Press(input.Backspace)
 			}
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(80 * time.Millisecond)
 
 			if isExpiry {
 				cleanDigits := ""
@@ -1325,26 +1367,66 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					}
 				}
 				if len(cleanDigits) == 4 {
-					_ = inp.Input(string(cleanDigits[0]))
-					time.Sleep(50 * time.Millisecond)
-					_ = inp.Input(string(cleanDigits[1]))
-					time.Sleep(600 * time.Millisecond)
-					_ = inp.Input(string(cleanDigits[2]))
-					time.Sleep(50 * time.Millisecond)
-					_ = inp.Input(string(cleanDigits[3]))
-					time.Sleep(100 * time.Millisecond)
+					month := cleanDigits[:2]
+					year := cleanDigits[2:]
+
+					_ = inp.Input(string(month[0]))
+					time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+					_ = inp.Input(string(month[1]))
+					time.Sleep(200 * time.Millisecond)
+
+					valRes, _ := page.Eval(`(sel) => {
+						try {
+							const el = document.querySelector(sel);
+							return el ? (el.value || '') : '';
+						} catch(e) { return ''; }
+					}`, selector)
+
+					currentVal := ""
+					if valRes != nil {
+						currentVal = valRes.Value.String()
+					}
+
+					if !strings.Contains(currentVal, "/") {
+						_ = inp.Input("/")
+						time.Sleep(time.Duration(50+rand.Intn(30)) * time.Millisecond)
+					} else {
+						time.Sleep(time.Duration(150+rand.Intn(50)) * time.Millisecond)
+					}
+
+					_ = inp.Input(string(year[0]))
+					time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+					_ = inp.Input(string(year[1]))
+					time.Sleep(150 * time.Millisecond)
+
+					_, _ = page.Eval(`(sel, mm, yy) => {
+						try {
+							const el = document.querySelector(sel);
+							if (el) {
+								let v = (el.value || '').trim();
+								if (!v.includes('/') || v === mm + yy) {
+									el.value = mm + ' / ' + yy;
+								}
+								el.dispatchEvent(new Event('input', { bubbles: true }));
+								el.dispatchEvent(new Event('change', { bubbles: true }));
+								el.dispatchEvent(new Event('blur', { bubbles: true }));
+							}
+						} catch(e) {}
+					}`, selector, month, year)
 				} else {
 					for _, ch := range value {
 						_ = inp.Input(string(ch))
-						time.Sleep(40 * time.Millisecond)
+						delay := 35 + rand.Intn(40)
+						time.Sleep(time.Duration(delay) * time.Millisecond)
 					}
 				}
 			} else {
 				for _, ch := range value {
 					_ = inp.Input(string(ch))
-					time.Sleep(40 * time.Millisecond)
+					delay := 35 + rand.Intn(45)
+					time.Sleep(time.Duration(delay) * time.Millisecond)
 				}
-				time.Sleep(50 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 
 				_, _ = page.Eval(`(sel) => {
 					try {
@@ -1352,6 +1434,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 						if (el) {
 							el.dispatchEvent(new Event('input', { bubbles: true }));
 							el.dispatchEvent(new Event('change', { bubbles: true }));
+							el.dispatchEvent(new Event('blur', { bubbles: true }));
 						}
 					} catch(e) {}
 				}`, selector)
