@@ -55,8 +55,13 @@ flowchart TD
    - Tự động bắt cổng TCP ngẫu nhiên để xác thực Proxy Upstream mà không bao giờ trùng lặp port giữa các luồng.
 2. **User Data Directory riêng (`os.MkdirTemp`)**:
    - Mỗi trình duyệt có bộ nhớ cache, cookie, local storage tách biệt hoàn toàn.
-3. **Chế độ chống bot (Stealth Mode)**:
-   - Xóa bỏ các dấu hiệu nhận diện bot của WebDriver (`navigator.webdriver`, fake canvas, audio fingerprint).
+3. **Bộ Sinh & Tiêm Vân Tay Chuẩn BitBrowser (BitBrowser-Grade Fingerprint)**:
+   - Mỗi luồng tự động tạo một hồ sơ phần cứng và vân tay độc nhất, không bao giờ trùng lặp:
+     - **CPU Cores (`hardwareConcurrency`)**: Ngẫu nhiên 4, 8, 12, 16, 24, 32 cores.
+     - **RAM (`deviceMemory`)**: Ngẫu nhiên 8GB, 16GB, 32GB.
+     - **Card đồ họa (WebGL GPU)**: Giả lập GPU rời/tích hợp thực tế (NVIDIA RTX 3060/3070/4060, Intel Iris Xe, UHD 630...).
+     - **Canvas & AudioContext Noise**: Bơm nhiễu siêu việt độc lập trên mỗi luồng để vượt qua kiểm tra hash của Cloudflare/Shopify.
+     - **Bảo vệ WebRTC**: Kích hoạt cờ chống rò rỉ địa chỉ IP thật qua giao thức WebRTC.
 
 ---
 

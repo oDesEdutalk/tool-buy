@@ -21,10 +21,12 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/go-rod/stealth"
 	"golang.org/x/net/proxy"
+
+	"tool-buy/fingerprint"
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-53013234:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68546709:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -785,7 +787,10 @@ func executeSingleCheckout(task CheckoutTask) error {
 		Leakless(false).
 		Headless(task.Headless).
 		Devtools(false).
-		Set("user-agent", ua)
+		Set("user-agent", ua).
+		Set("disable-blink-features", "AutomationControlled").
+		Set("force-webrtc-ip-handling-policy", "default_public_interface_only").
+		Set("lang", "en-US")
 
 	if userDataDir != "" {
 		l = l.UserDataDir(userDataDir)
@@ -833,10 +838,16 @@ func executeSingleCheckout(task CheckoutTask) error {
 		page = browser.MustPage()
 	}
 
+	// Tự sinh và tiêm vân tay ngẫu nhiên độc lập chuẩn BitBrowser
+	fpProfile := fingerprint.GenerateRandomProfile(winW, winH)
+	if err := fpProfile.ApplyToPage(page); err != nil {
+		log.Printf("[!] Cảnh báo: Lỗi áp dụng vân tay: %v\n", err)
+	}
+
 	page.MustSetWindow(0, 0, winW, winH)
 	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{UserAgent: ua})
 
-	log.Printf("-> [THÔNG TIN GIẢ LẬP TRÌNH DUYỆT]:\n   * User-Agent: %s\n   * Màn hình  : %dx%d\n", ua, winW, winH)
+	log.Printf("-> [THÔNG TIN GIẢ LẬP TRÌNH DUYỆT]:\n   * User-Agent: %s\n   * Màn hình  : %dx%d\n   * Vân tay (BitBrowser-Grade): %s\n", ua, winW, winH, fpProfile.Summary())
 
 	log.Printf("-> Đang truy cập URL: %s ...\n", task.URL)
 	err = page.Navigate(task.URL)

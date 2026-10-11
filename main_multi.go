@@ -25,6 +25,8 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/go-rod/stealth"
 	"golang.org/x/net/proxy"
+
+	"tool-buy/fingerprint"
 )
 
 // DefaultProxy mặc định
@@ -1196,7 +1198,10 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		Leakless(false).
 		Headless(task.Headless).
 		Devtools(false).
-		Set("user-agent", ua)
+		Set("user-agent", ua).
+		Set("disable-blink-features", "AutomationControlled").
+		Set("force-webrtc-ip-handling-policy", "default_public_interface_only").
+		Set("lang", "en-US")
 
 	if userDataDir != "" {
 		l = l.UserDataDir(userDataDir)
@@ -1248,10 +1253,16 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		page = browser.MustPage()
 	}
 
+	// Tự sinh và tiêm vân tay ngẫu nhiên độc lập chuẩn BitBrowser
+	fpProfile := fingerprint.GenerateRandomProfile(winW, winH)
+	if err := fpProfile.ApplyToPage(page); err != nil {
+		logWorker(workerID, "[!] Cảnh báo: Lỗi áp dụng vân tay: %v\n", err)
+	}
+
 	page.MustSetWindow(0, 0, winW, winH)
 	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{UserAgent: ua})
 
-	logWorker(workerID, "Đã mở trình duyệt [UA: %s] [Screen: %dx%d]\n", ua, winW, winH)
+	logWorker(workerID, "Đã mở trình duyệt [UA: %s] [Screen: %dx%d]\n   -> Vân tay (BitBrowser-Grade): %s\n", ua, winW, winH, fpProfile.Summary())
 
 	logWorker(workerID, "Đang mở URL: %s ...\n", task.URL)
 	err = page.Navigate(task.URL)

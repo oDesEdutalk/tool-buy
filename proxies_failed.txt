@@ -8,3 +8,5 @@
 [2026-10-11 19:58:07] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-91128992:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
 [2026-10-11 19:58:16] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-86393042:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_CLOSED
 [2026-10-11 20:03:18] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-22888643:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 21:37:55] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-52391939:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 21:44:20] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68546709:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
