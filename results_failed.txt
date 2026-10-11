@@ -1,0 +1,2 @@
+[2026-10-11 08:39:02] Thất bại: Thẻ 4160********5048 | Lỗi: navigation failed: net::ERR_CONNECTION_CLOSED | Proxy: global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042532:41b761
+[2026-10-11 08:54:52] Thất bại: Thẻ 4160********5048 | Lỗi: navigation failed: net::ERR_CONNECTION_ABORTED | Proxy: global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042532:41b761

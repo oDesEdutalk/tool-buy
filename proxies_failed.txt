@@ -1,0 +1,2 @@
+[2026-10-11 08:54:52] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042532:41b761 | Lỗi: navigation failed: net::ERR_CONNECTION_ABORTED
+[2026-10-11 09:17:45] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042533:41b761 | Lỗi: navigation failed: net::ERR_CONNECTION_CLOSED

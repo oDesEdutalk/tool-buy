@@ -1,0 +1,4 @@
+# Danh sách thông tin thẻ & địa chỉ thanh toán (mỗi dòng 1 profile)
+# Định dạng: Số thẻ|Tháng|Năm|CVV|Họ tên|Địa chỉ|Thành phố|Bang|Zip code|Quốc gia|Số điện thoại|Email
+4160467122625048|07|29|082|Elizabeth Bass|7920 N 107Th #9|Milwaukee|WI|53224|US|4143243575|lizjay2415@gmail.com
+4160467122625049|08|28|123|John Doe|123 Main St|New York|NY|10001|US|2125551234|johndoe123@gmail.com
