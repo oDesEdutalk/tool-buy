@@ -10,3 +10,12 @@
 [2026-10-11 20:03:18] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-22888643:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
 [2026-10-11 21:37:55] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-52391939:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
 [2026-10-11 21:44:20] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68546709:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 22:29:24] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-91314567:41b761 | Lỗi: thanh toán không thành công: Your order’s being processed.
+[2026-10-11 22:34:20] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-24030351:41b761 | Lỗi: thanh toán không thành công: Your order’s being processed.
+[2026-10-11 22:38:39] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-41933429:41b761 | Lỗi: thanh toán không thành công: Your card was declined. Try again or use a different payment method.
+[2026-10-11 22:42:13] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-88976030:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 22:45:28] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-87114147:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 22:48:53] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-85976183:41b761 | Lỗi: thanh toán không thành công: Can only be 35 characters long
+[2026-10-11 22:48:58] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-88854115:41b761 | Lỗi: thanh toán không thành công: Can only be 35 characters long
+[2026-10-11 22:49:08] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-31561393:41b761 | Lỗi: thanh toán không thành công: Cổng thanh toán từ chối hoặc giao dịch không hoàn tất
+[2026-10-11 22:52:00] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-20864583:41b761 | Lỗi: thanh toán không thành công: Can only be 35 characters long

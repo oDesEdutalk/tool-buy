@@ -1,20 +1,9 @@
 # Danh sách thông tin thẻ & địa chỉ thanh toán (mỗi dòng 1 profile)
 # Định dạng: Số thẻ|Tháng|Năm|CVV|Họ tên|Địa chỉ|Thành phố|Bang|Zip code|Quốc gia|Số điện thoại|Email
-4420572551722004|09|30|750|Kelly Bullock|4586 Smith Village|Adamsburgh|Illinois|53324|US|(446) 690-7918|sydney_rosario@hotmail.com|LIVE|85 No reason to decline|T0CHECK.CO
-5232220035727901|06|29|673|Gabriel Ramirez|705 Schneider Port Apt. 432|Port Karenfurt|Oklahoma|36840|US|(742) 352-3549|miller.joshua@aol.com|LIVE|85 No reason to decline|T0CHECK.CO
-5232220006851714|09|30|472|Darren Flores|537 Patrick Vista|Amybury|Oregon|08829|US|(401) 127-3447|ewilliams@gmail.com|LIVE|85 No reason to decline|T0CHECK.CO
-5232220043877482|07|30|353|Judith Chambers|Spring Hill3225 Parkhill Ave|Spring Hill|Florida|34609|US|(150) 002-7631|hollydavis@outlook.com|LIVE|85 No reason to decline|T0CHECK.CO
-5232220001895534|09|30|543|Brandon Johnson|76669 King Mill|Moraleshaven|Oregon|20225|US|(400) 137-0278|dylan.parker@yahoo.com|LIVE|85 No reason to decline|T0CHECK.CO
-5534531103030290|05|29|368|Elizabeth Duncan|408 Windsor st 2|Lakeland|FL|33803|US|(863) 800-7962|1953bandan@gmail.com|||||||||||||||||||||||||||||||||||||||||||||||||||||LIVE|85 No reason to decline|T0CHECK.CO
-4420572754613927|03|31|849|Margaret Ramirez|87600 Hannah Ridge|Peterburgh|Idaho|86678|US|(004) 468-2798|pfields@aol.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572152924447|11|30|936|Adam Peck|78639 Garcia Unions|Kingstad|New Mexico|46612|US|(039) 404-8922|kurt.harmon@outlook.com|||||||||||||||||||||||||||||||||||||||||||||||||||||LIVE|85 No reason to decline|T0CHECK.CO
-5232220007403127|09|30|128|Alice Graves|65462 Stephen Club Suite 174|Gomezshire|Rhode Island|42870|US|(712) 086-7045|james_king@hotmail.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572551433024|06|30|352|Caitlin Martinez|224 Carla Drive Suite 681|New Raymondton|Wyoming|97634|US|(049) 311-2611|cflores@yahoo.com|||||||||||||||||||||||||||||||||||||||||||||||||||||LIVE|85 No reason to decline|T0CHECK.CO
-4420572755840263|05|31|246|Larry Lyons|2267 Evans Ramp Apt. 483|Port Amberview|Maine|98225|US|(082) 054-4596|davidpadilla@gmail.com|LIVE|85 No reason to decline|T0CHECK.CO
-5232220044725383|03|28|851|Andrew Oconnor|47581 Johnson Skyway|New Anthonyburgh|New York|14612|US|322-148-5414|wendyh1945@outlook.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572551441050|06|30|022|Robin Gibson|655 Valdez Port Suite 809|Stephanieshire|Nevada|25559|US|(896) 256-4628|jbutler@yahoo.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572351292869|05|30|033|Norma Peters|1802 W Easton Ct|Tulsa|OK|74127|US|(992) 711-2898|sharonh@gmail.com|||||||||||||||||||||||||||||||||||||||||||||||||||||LIVE|85 No reason to decline|T0CHECK.CO
-4420572150019737|06|29|752|Justin Murphy|092 Jenna Road|South Carriefort|Montana|73935|US|(981) 623-1114|stevens.perry19@icloud.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572050933292|08|30|994|Chris Wong|09579 Donna Lane|Shelbyfort|Georgia|10161|US|775-283-9571|matthew.barton@icloud.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572550045977|06|29|940|Michelle Wallace|408 Perez Manors Suite 291|Alvaradohaven|Massachusetts|67760|US|971-024-9541|brian.fleming1969@gmail.com|LIVE|85 No reason to decline|T0CHECK.CO
-4420572128924265|09|31|691|John King|83225 Morgan Haven|Thomasburgh|South Dakota|32169|US|615-801-6294|gutierrezbilly18@aol.com|LIVE|85 No reason to decline|T0CHECK.CO
+5534531201255039|06|30|244|Marcela  Covas|132 Chanel Terrace|Falls Church|Virginia|22046|US|+15715101558|marcelush2000@gmail.com
+5230810096781144|10|26|154|Naria Lawson|6138 aster haven cir|Haymarket|VA|20169|US|5713593741|yolandam921@gmail.com|146.125.226.164
+5230810070350445|04|28|832|Hicham Attafi|10671 Woodchuck Ln|Bonita Springs|FL|34135|US|9405031726
+4420572551542931|06|30|470|Shonda Faris|25802 W Rockaway Hills Rd|Morristown|Arizona|85342|US|3073312678|shondaleigh50@gmail.com
+4127770013410103|09|30|646|AnnMarie Cazzetta|Waxhaw 4711 Idol Rock Way|Waxhaw|North Carolina|28173|US|6462010315|anncazzetta@gmail.com
+4127770012099360|03|30|335|Kimberly Crosby|6688 Voyage  Dr|Sparks|Nevada|89436|US|2094823940|kimberly.anne.crosby@gmail.com
+5230810035587057|03|31|340|Melissa Bonner|343 Handel Ave|Shafter|CA|93263-1876|US|16613462419|mbonner_67@yahoo.com

@@ -26,7 +26,7 @@ import (
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68546709:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-90659757:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -916,8 +916,8 @@ func executeSingleCheckout(task CheckoutTask) error {
 }
 
 func main() {
-	targetURL := flag.String("url", "https://www.on.com/en-us/products/5-court-shorts-m-1mg1019/mens/black-apparel-1MG10190553", "URL trang web cần mở")
-	targetSize := flag.String("size", "M", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
+	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudtilt-m-3me1010/mens/black-ivory-shoes-3ME10101430", "URL trang web cần mở")
+	targetSize := flag.String("size", "9", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
 	proxyRaw := flag.String("proxy", "", "Proxy SOCKS5 riêng biệt (nếu muốn chỉ định trực tiếp)")
 	proxyFileFlag := flag.String("proxy-file", "proxies.txt", "File danh sách proxy SOCKS5")
 	telegramFileFlag := flag.String("telegram-file", "telegram.txt", "File cấu hình Telegram Bot (BOT_TOKEN, CHAT_ID)")
@@ -925,7 +925,7 @@ func main() {
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 	headless := flag.Bool("headless", false, "Chạy ẩn trình duyệt (true/false)")
 
-	dataRaw := flag.String("data", "5261020013630117|06|28|893|Caitlin Shepherd|46677 Nelson Pines|Hamptonton|Illinois|62295|US|468-368-6344|andersonemily@icloud.com|||||||||||||||||||||||||||||||||||LIVE|85 No reason to decline|T0CHECK.CO", "Chuỗi dữ liệu tổng hợp")
+	dataRaw := flag.String("data", "5534531201255039|06|30|244|Marcela  Covas|132 Chanel Terrace|Falls Church|Virginia|22046|US|+15715101558|marcelush2000@gmail.com", "Chuỗi dữ liệu tổng hợp")
 	emailFlag := flag.String("email", "", "Email thanh toán (để trống sẽ tự lấy từ -data)")
 	firstNameFlag := flag.String("firstname", "", "Tên (First Name)")
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")
