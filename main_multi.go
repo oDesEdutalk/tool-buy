@@ -58,6 +58,7 @@ type CheckoutTask struct {
 	Profile      *UserProfile
 	DiscountCode string
 	Headless     bool
+	UserAgent    string
 }
 
 // SystemSpecs thông tin phần cứng máy tính
@@ -553,6 +554,49 @@ func readLinesFromFile(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+// defaultUserAgents danh sách User-Agent hiện đại dự phòng
+var defaultUserAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
+}
+
+// getRandomUserAgent đọc ngẫu nhiên một User-Agent từ file (hoặc dùng danh sách mặc định)
+func getRandomUserAgent(filePath string) string {
+	lines, err := readLinesFromFile(filePath)
+	if err == nil && len(lines) > 0 {
+		return lines[rand.Intn(len(lines))]
+	}
+	return defaultUserAgents[rand.Intn(len(defaultUserAgents))]
+}
+
+type WindowResolution struct {
+	Width  int
+	Height int
+}
+
+var commonResolutions = []WindowResolution{
+	{1920, 1080},
+	{1536, 864},
+	{1440, 900},
+	{1366, 768},
+	{1600, 900},
+	{1680, 1050},
+	{1280, 800},
+}
+
+func getRandomResolution() (int, int) {
+	res := commonResolutions[rand.Intn(len(commonResolutions))]
+	return res.Width, res.Height
+}
+
 // appendResultFile ghi kết quả ra file thành công hoặc thất bại
 func appendResultFile(filename, content string) {
 	resultMutex.Lock()
@@ -579,6 +623,7 @@ func main() {
 	discountFileFlag := flag.String("discount-file", "discounts.txt", "File danh sách mã giảm giá")
 	telegramFileFlag := flag.String("telegram-file", "telegram.txt", "File cấu hình Telegram Bot (BOT_TOKEN, CHAT_ID)")
 	phonesFileFlag := flag.String("phones-file", "phones.txt", "File danh sách số điện thoại (ngẫu nhiên)")
+	uaFileFlag := flag.String("ua-file", "user_agents.txt", "File danh sách User-Agent (ngẫu nhiên)")
 	teleTokenFlag := flag.String("tele-token", "", "Telegram Bot Token")
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 
@@ -692,12 +737,16 @@ func main() {
 	}
 
 	phones, _ := readLinesFromFile(*phonesFileFlag)
+	userAgents, _ := readLinesFromFile(*uaFileFlag)
 
 	fmt.Printf(" [DANH SÁCH DỮ LIỆU ĐÃ TẢI]\n")
 	fmt.Printf(" -> Tổng số Profile/Thẻ : %d (Sẽ thực thi: %d)\n", len(cards), usableCount)
 	fmt.Printf(" -> Tổng số Proxy       : %d (1 Proxy / 1 Luồng riêng biệt)\n", initialAvailable)
 	if len(phones) > 0 {
 		fmt.Printf(" -> Tổng số SĐT (random): %d (từ %s)\n", len(phones), *phonesFileFlag)
+	}
+	if len(userAgents) > 0 {
+		fmt.Printf(" -> Tổng số User-Agent  : %d (ngẫu nhiên từ %s)\n", len(userAgents), *uaFileFlag)
 	}
 	fmt.Printf(" -> Tổng số Mã giảm giá : %d\n", len(discounts))
 	fmt.Printf(" -> URL Sản phẩm        : %s\n", *targetURL)
@@ -736,6 +785,7 @@ func main() {
 			Profile:      prof,
 			DiscountCode: d,
 			Headless:     *headlessFlag,
+			UserAgent:    getRandomUserAgent(*uaFileFlag),
 		})
 	}
 
@@ -861,10 +911,18 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		defer os.RemoveAll(userDataDir)
 	}
 
+	ua := task.UserAgent
+	if ua == "" {
+		ua = getRandomUserAgent("user_agents.txt")
+	}
+
+	winW, winH := getRandomResolution()
+
 	l := launcher.New().
 		Leakless(false).
 		Headless(task.Headless).
-		Devtools(false)
+		Devtools(false).
+		Set("user-agent", ua)
 
 	if userDataDir != "" {
 		l = l.UserDataDir(userDataDir)
@@ -916,7 +974,10 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		page = browser.MustPage()
 	}
 
-	page.MustSetWindow(0, 0, 1366, 900)
+	page.MustSetWindow(0, 0, winW, winH)
+	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{UserAgent: ua})
+
+	logWorker(workerID, "Đã mở trình duyệt [UA: %s] [Screen: %dx%d]\n", ua, winW, winH)
 
 	logWorker(workerID, "Đang mở URL: %s ...\n", task.URL)
 	err = page.Navigate(task.URL)
@@ -1120,6 +1181,21 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 			_ = humanType(page, addressEl, addressToType)
 			time.Sleep(1 * time.Second)
 			_ = selectFirstAddressSuggestion(page, addressEl, addressToType)
+
+			// Theo yêu cầu: Sau khi click gợi ý địa chỉ, cập nhật lại ô địa chỉ thành firstname + ". " + address (không click suggestion nữa)
+			addrBase := profile.Address
+			if addrBase == "" {
+				addrBase = addressToType
+			}
+			customAddr := addrBase
+			if profile.FirstName != "" && !strings.HasPrefix(addrBase, profile.FirstName+". ") {
+				customAddr = fmt.Sprintf("%s. %s", profile.FirstName, addrBase)
+			}
+
+			time.Sleep(1500 * time.Millisecond)
+			updateAddressField(page, customAddr)
+			time.Sleep(1 * time.Second)
+
 			waitForAddressAPIToComplete(page)
 		}
 	}
@@ -1289,6 +1365,67 @@ func selectFirstAddressSuggestion(page *rod.Page, addressEl *rod.Element, addres
 	}
 
 	return fmt.Errorf("không tìm thấy dòng gợi ý địa chỉ")
+}
+
+// updateAddressField cập nhật lại giá trị ô địa chỉ thành firstname.address và đóng gợi ý
+func updateAddressField(page *rod.Page, newAddress string) {
+	selectors := []string{
+		`input[name="address1"]`,
+		`input[name="address"]`,
+		`input[name="streetAddress"]`,
+		`input[name="shippingAddress.address1"]`,
+		`input[placeholder*="enter an address" i]`,
+		`input[placeholder*="house number" i]`,
+		`input[placeholder*="Address" i]`,
+		`input[placeholder*="Street" i]`,
+		`input#address1`,
+		`input#shipping-address1`,
+		`input[id*="address" i]`,
+	}
+
+	addrEl := findInputField(page, selectors)
+	if addrEl != nil {
+		_ = addrEl.Focus()
+		_ = addrEl.SelectAllText()
+		_ = addrEl.Input(newAddress)
+	}
+
+	// Đảm bảo cập nhật bằng cả JavaScript Event để React/Shopify nhận diện 100%
+	_, _ = page.Eval(`(val) => {
+		const selectors = [
+			'input[name="address1"]',
+			'input[name="address"]',
+			'input[name="streetAddress"]',
+			'input[name="shippingAddress.address1"]',
+			'input#address1',
+			'input#shipping-address1',
+			'input[placeholder*="enter an address" i]',
+			'input[placeholder*="Address" i]'
+		];
+		for (const sel of selectors) {
+			const el = document.querySelector(sel);
+			if (el) {
+				const rect = el.getBoundingClientRect();
+				if (rect.width > 0 && rect.height > 0) {
+					el.focus();
+					const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+					if (setter) {
+						setter.call(el, val);
+					} else {
+						el.value = val;
+					}
+					el.dispatchEvent(new Event('input', { bubbles: true }));
+					el.dispatchEvent(new Event('change', { bubbles: true }));
+					el.blur();
+					return true;
+				}
+			}
+		}
+		return false;
+	}`, newAddress)
+
+	// Đóng triệt để popup dropdown gợi ý nếu còn mở và không cần click suggestion nữa
+	_ = page.Keyboard.Press(input.Escape)
 }
 
 // findInputField tìm kiếm ô input theo danh sách selector
