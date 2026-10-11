@@ -26,7 +26,7 @@ import (
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-90659757:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-43184919:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -925,7 +925,7 @@ func main() {
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 	headless := flag.Bool("headless", false, "Chạy ẩn trình duyệt (true/false)")
 
-	dataRaw := flag.String("data", "5534531201255039|06|30|244|Marcela  Covas|132 Chanel Terrace|Falls Church|Virginia|22046|US|+15715101558|marcelush2000@gmail.com", "Chuỗi dữ liệu tổng hợp")
+	dataRaw := flag.String("data", "5230810008860473|03|28|187|Charles B Townsend|5924 Kamehameha V Hwy|Kaunakakai|HI|96748|US|8082134457|townsendcharles781@gmail.com|2601:280:ce7d:6e40:e817:bf81:dfb8:4596", "Chuỗi dữ liệu tổng hợp")
 	emailFlag := flag.String("email", "", "Email thanh toán (để trống sẽ tự lấy từ -data)")
 	firstNameFlag := flag.String("firstname", "", "Tên (First Name)")
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")

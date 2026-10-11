@@ -19,3 +19,5 @@
 [2026-10-11 22:48:58] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-88854115:41b761 | Lỗi: thanh toán không thành công: Can only be 35 characters long
 [2026-10-11 22:49:08] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-31561393:41b761 | Lỗi: thanh toán không thành công: Cổng thanh toán từ chối hoặc giao dịch không hoàn tất
 [2026-10-11 22:52:00] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-20864583:41b761 | Lỗi: thanh toán không thành công: Can only be 35 characters long
+[2026-10-11 23:00:26] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-90659757:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 23:00:31] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-70535627:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_CLOSED
