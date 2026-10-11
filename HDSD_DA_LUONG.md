@@ -60,10 +60,17 @@ flowchart TD
 
 ---
 
-### Bước 3: Phân Bổ Dữ Liệu (Data Distribution) & Quản Lý Proxy
+### Bước 3: Phân Bổ Dữ Liệu & Cơ Chế Quản Lý Proxy (ProxyManager)
 - **Proxy Độc Lập (1 Luồng = 1 Proxy)**: Mỗi luồng/tác vụ nhận đúng **1 Proxy riêng biệt** từ `proxies.txt`, hoàn toàn không dùng chung hay trùng lặp proxy giữa các luồng.
-- **Xử Lý Khi Thiếu Proxy**: Nếu số lượng proxy trong `proxies.txt` ít hơn số thẻ/profile trong `cards.txt`, hệ thống sẽ **chỉ sử dụng số proxy còn lại trong file** tương ứng với số tác vụ khả thi, đồng thời gửi cảnh báo đến Telegram.
-- **Tự Động Phát Hiện & Đánh Dấu Proxy Hỏng**: Khi gặp sự cố mạng hoặc lỗi `[!] Lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_CLOSED` (hoặc timeout/bridge lỗi), proxy đó sẽ tự động được ghi nhận và lưu vào file **`proxies_failed.txt`**.
+- **Thất Bại Tự Động Đổi Proxy Khác**:
+  - Khi một tác vụ gặp lỗi (dù là lỗi mạng `net::ERR_CONNECTION_CLOSED`, proxy die hay cổng thanh toán báo lỗi/từ chối thẻ):
+  - Hệ thống ghi nhận proxy đó vào **`proxies_failed.txt`** kèm lý do cụ thể.
+  - Tự động lấy **proxy khả dụng tiếp theo** trong danh sách `proxies.txt` để thử lại đơn hàng ngay lập tức.
+  - Loại bỏ các proxy đã hỏng khỏi `proxies.txt`.
+- **Thành Công Giữ Nguyên Proxy Cho Phiên Tiếp Theo**:
+  - Khi thanh toán thành công với một proxy, tool sẽ tự động cập nhật lại file `proxies.txt`, **đưa proxy thành công lên vị trí số 1 (dòng đầu tiên)**.
+  - Ở các phiên làm việc tiếp theo (hoặc khi bật lại tool), proxy này sẽ tiếp tục được ưu tiên sử dụng để mua hàng.
+- **Xử Lý Khi Thiếu Proxy**: Nếu số lượng proxy trong `proxies.txt` ít hơn số thẻ/profile, hệ thống sẽ **chỉ sử dụng số proxy còn lại trong file** tương ứng với số tác vụ khả thi, đồng thời gửi cảnh báo đến Telegram.
 - **Cảnh Báo Telegram Tự Động**: Khi file `proxies.txt` hết proxy hoặc toàn bộ proxy đã bị lỗi không thể chạy tiếp, tool sẽ tự động gửi thông báo khẩn cấp đến tài khoản Telegram của bạn.
 - **Mã giảm giá**: `discounts[i % len(discounts)]`
 - **Thẻ & Profile**: Mỗi tác vụ lấy 1 dòng từ `cards.txt`.

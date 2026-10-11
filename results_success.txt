@@ -1,3 +1,4 @@
 [2026-10-11 08:40:50] Thành công: Thẻ 4160********5049 | Email: johndoe123@gmail.com | Proxy: global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042533:41b761 | Mã: IDME_ON_20_PROMO2
 [2026-10-11 08:56:38] Thành công: Thẻ 4160********5049 | Email: johndoe123@gmail.com | Proxy: global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042533:41b761 | Mã: IDME_ON_20_PROMO2
 [2026-10-11 09:25:13] Thành công: Thẻ 4160********5048 | Email: lizjay2415@gmail.com | Proxy: global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042534:41b761 | Mã: IDME_ON_20_JOLDOZ
+[2026-10-11 09:35:11] Thành công: Thẻ 4160********5048 | Email: lizjay2415@gmail.com | Proxy: global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042534:41b761 | Mã: IDME_ON_20_JOLDOZ

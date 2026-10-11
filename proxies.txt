@@ -1,8 +1,2 @@
-# Danh sách Socks5 Proxy (mỗi dòng 1 proxy)
-# Định dạng hỗ trợ:
-# 1. host:port:username:password
-# 2. socks5://username:password@host:port
-# 3. host:port (nếu proxy không có user/pass)
-global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042532:41b761
-global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042533:41b761
-global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042534:41b761
+# Danh sách Socks5 Proxy (Cập nhật tự động bởi Tool)
+# Các proxy mua thành công được xếp ưu tiên trên đầu cho phiên tiếp theo:

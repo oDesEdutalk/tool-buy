@@ -245,6 +245,160 @@ func sendTelegramAlert(cfg TelegramConfig, message string) {
 	log.Printf("[Telegram] ✅ Đã gửi cảnh báo Telegram thành công đến Chat ID: %s\n", cfg.ChatID)
 }
 
+// ProxyManager quản lý danh sách proxy, xoay vòng khi lỗi và giữ lại proxy thành công cho phiên sau
+type ProxyManager struct {
+	mu         sync.Mutex
+	filePath   string
+	available  []string
+	successful []string
+	inUseMap   map[string]bool
+	failedMap  map[string]bool
+	teleCfg    TelegramConfig
+	alertSent  bool
+}
+
+// NewProxyManager khởi tạo bộ quản lý proxy từ file proxies.txt và proxies_failed.txt
+func NewProxyManager(filePath string, failedFilePath string, teleCfg TelegramConfig) *ProxyManager {
+	failedMap := loadFailedProxies(failedFilePath)
+
+	lines, err := readLinesFromFile(filePath)
+	if err != nil {
+		lines = []string{}
+	}
+
+	var available []string
+	seen := make(map[string]bool)
+
+	for _, p := range lines {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.HasPrefix(p, "#") {
+			continue
+		}
+		if !failedMap[p] && !seen[p] {
+			available = append(available, p)
+			seen[p] = true
+		}
+	}
+
+	return &ProxyManager{
+		filePath:   filePath,
+		available:  available,
+		successful: make([]string, 0),
+		inUseMap:   make(map[string]bool),
+		failedMap:  failedMap,
+		teleCfg:    teleCfg,
+	}
+}
+
+// GetNextProxy lấy proxy khả dụng tiếp theo từ danh sách
+func (pm *ProxyManager) GetNextProxy() (string, bool) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if len(pm.available) == 0 {
+		return "", false
+	}
+	p := pm.available[0]
+	pm.available = pm.available[1:]
+	pm.inUseMap[p] = true
+	return p, true
+}
+
+// AvailableCount đếm số proxy còn lại chưa dùng trong hàng đợi
+func (pm *ProxyManager) AvailableCount() int {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	return len(pm.available)
+}
+
+// MarkFailed ghi nhận proxy thất bại, cập nhật proxies.txt, lưu vào proxies_failed.txt và gửi Telegram nếu hết proxy
+func (pm *ProxyManager) MarkFailed(proxyStr string, reason string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	delete(pm.inUseMap, proxyStr)
+	pm.failedMap[proxyStr] = true
+	recordFailedProxy(proxyStr, reason)
+
+	// Cập nhật lại file proxies.txt loại bỏ proxy hỏng
+	pm.saveStateLocked()
+
+	// Nếu hàng đợi và in-use không còn proxy nào khác -> Báo Telegram
+	if len(pm.available) == 0 && len(pm.inUseMap) == 0 && !pm.alertSent {
+		pm.alertSent = true
+		errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>HẾT PROXY ĐỂ ĐỔI TIẾP TỤC!</b>\n- Proxy <code>%s</code> vừa bị lỗi: %s\n- Trong file <code>%s</code> không còn proxy khả dụng nào khác để thay thế!\n- Vui lòng cập nhật proxy mới vào file.\n- Thời gian: %s",
+			proxyStr, reason, pm.filePath, time.Now().Format("2006-01-02 15:04:05"))
+		sendTelegramAlert(pm.teleCfg, errMsg)
+	}
+}
+
+// MarkSuccess ghi nhận proxy thành công để ưu tiên sử dụng ở vị trí số 1 cho các phiên tiếp theo
+func (pm *ProxyManager) MarkSuccess(proxyStr string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	delete(pm.inUseMap, proxyStr)
+
+	// Đưa proxy vừa mua thành công lên vị trí đầu tiên
+	var newSucc []string
+	newSucc = append(newSucc, proxyStr)
+	for _, p := range pm.successful {
+		if p != proxyStr {
+			newSucc = append(newSucc, p)
+		}
+	}
+	pm.successful = newSucc
+
+	// Lưu ngay lập tức vào file proxies.txt để đảm bảo proxy thành công nằm ở dòng đầu tiên
+	pm.saveStateLocked()
+}
+
+// SaveState cập nhật lại proxies.txt: Đưa proxy thành công lên đầu, giữ lại proxy chưa dùng, xóa proxy lỗi
+func (pm *ProxyManager) SaveState() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.saveStateLocked()
+}
+
+func (pm *ProxyManager) saveStateLocked() {
+	if pm.filePath == "" {
+		return
+	}
+
+	var newLines []string
+	newLines = append(newLines, "# Danh sách Socks5 Proxy (Cập nhật tự động bởi Tool)")
+	newLines = append(newLines, "# Các proxy mua thành công được xếp ưu tiên trên đầu cho phiên tiếp theo:")
+
+	seen := make(map[string]bool)
+
+	// 1. Proxy thành công lên đầu tiên
+	for _, p := range pm.successful {
+		if !seen[p] && !pm.failedMap[p] {
+			newLines = append(newLines, p)
+			seen[p] = true
+		}
+	}
+
+	// 2. Các proxy đang được sử dụng (in-use)
+	for p := range pm.inUseMap {
+		if !seen[p] && !pm.failedMap[p] {
+			newLines = append(newLines, p)
+			seen[p] = true
+		}
+	}
+
+	// 3. Các proxy khả dụng còn lại trong hàng đợi
+	for _, p := range pm.available {
+		if !seen[p] && !pm.failedMap[p] {
+			newLines = append(newLines, p)
+			seen[p] = true
+		}
+	}
+
+	content := strings.Join(newLines, "\n") + "\n"
+	_ = os.WriteFile(pm.filePath, []byte(content), 0644)
+}
+
 // logWorker ghi log có prefix số luồng rõ ràng
 func logWorker(workerID int, format string, v ...interface{}) {
 	logMutex.Lock()
@@ -510,31 +664,12 @@ func main() {
 		}
 	}
 
-	// Lọc bỏ các proxy đã bị lỗi trước đó trong proxies_failed.txt
-	priorFailed := loadFailedProxies("proxies_failed.txt")
-	failedProxyMutex.Lock()
-	for p := range priorFailed {
-		failedProxyMap[p] = true
-	}
-	failedProxyMutex.Unlock()
-
-	var validProxies []string
-	for _, p := range proxies {
-		if !priorFailed[p] {
-			validProxies = append(validProxies, p)
-		}
-	}
-
-	if len(priorFailed) > 0 {
-		skipped := len(proxies) - len(validProxies)
-		if skipped > 0 {
-			fmt.Printf(" [LỌC PROXY] Đã loại bỏ %d proxy bị lỗi trước đó (ghi nhận trong proxies_failed.txt).\n", skipped)
-		}
-	}
-	proxies = validProxies
+	// Khởi tạo ProxyManager quản lý danh sách proxy, tự động xoay vòng khi lỗi và lưu proxy thành công
+	pm := NewProxyManager(*proxyFileFlag, "proxies_failed.txt", teleCfg)
+	initialAvailable := pm.AvailableCount()
 
 	// Kiểm tra nếu không còn proxy nào khả dụng -> Báo lỗi & gửi Telegram
-	if len(proxies) == 0 {
+	if initialAvailable == 0 {
 		errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>HẾT PROXY ĐỂ CHẠY!</b>\n- File proxy <code>%s</code> hiện không còn proxy nào khả dụng (tất cả proxy đều đã bị lỗi/hỏng).\n- Vui lòng bổ sung proxy mới vào file để tiếp tục.\n- Thời gian: %s",
 			*proxyFileFlag, time.Now().Format("2006-01-02 15:04:05"))
 		fmt.Printf("\n[!] LỖI: Hết proxy khả dụng! Tất cả proxy trong '%s' đều đã bị lỗi. Đang gửi thông báo Telegram...\n", *proxyFileFlag)
@@ -544,21 +679,20 @@ func main() {
 
 	// Yêu cầu: Mỗi luồng dùng 1 proxy khác nhau, khi không đủ chỉ sử dụng phần còn lại trong file
 	totalCards := len(cards)
-	totalProxies := len(proxies)
 	usableCount := totalCards
-	if totalProxies < totalCards {
-		usableCount = totalProxies
-		fmt.Printf("\n[!] THÔNG BÁO: Số Proxy khả dụng (%d) ít hơn số Thẻ/Profile (%d).\n", totalProxies, totalCards)
-		fmt.Printf("==> Hệ thống CHỈ CHẠY %d TÁC VỤ (mỗi luồng 1 proxy riêng biệt, sử dụng hết %d proxy còn lại trong file).\n\n", usableCount, totalProxies)
+	if initialAvailable < totalCards {
+		usableCount = initialAvailable
+		fmt.Printf("\n[!] THÔNG BÁO: Số Proxy khả dụng ban đầu (%d) ít hơn số Thẻ/Profile (%d).\n", initialAvailable, totalCards)
+		fmt.Printf("==> Hệ thống CHỈ CHẠY %d TÁC VỤ (mỗi luồng 1 proxy riêng biệt, sử dụng hết %d proxy còn lại trong file).\n\n", usableCount, initialAvailable)
 
 		warnMsg := fmt.Sprintf("⚠️ <b>[CẢNH BÁO THIẾU PROXY]</b>\n\n- Tổng số Profile: %d\n- Proxy khả dụng còn lại: %d\n- Hệ thống sẽ chỉ chạy <b>%d</b> tác vụ tương ứng với số proxy hiện có.\n- Còn lại <b>%d</b> profile chưa có proxy để chạy.\n- Thời gian: %s",
-			totalCards, totalProxies, usableCount, totalCards-usableCount, time.Now().Format("2006-01-02 15:04:05"))
+			totalCards, initialAvailable, usableCount, totalCards-usableCount, time.Now().Format("2006-01-02 15:04:05"))
 		sendTelegramAlert(teleCfg, warnMsg)
 	}
 
 	fmt.Printf(" [DANH SÁCH DỮ LIỆU ĐÃ TẢI]\n")
 	fmt.Printf(" -> Tổng số Profile/Thẻ : %d (Sẽ thực thi: %d)\n", len(cards), usableCount)
-	fmt.Printf(" -> Tổng số Proxy       : %d (1 Proxy / 1 Luồng riêng biệt)\n", len(proxies))
+	fmt.Printf(" -> Tổng số Proxy       : %d (1 Proxy / 1 Luồng riêng biệt)\n", initialAvailable)
 	fmt.Printf(" -> Tổng số Mã giảm giá : %d\n", len(discounts))
 	fmt.Printf(" -> URL Sản phẩm        : %s\n", *targetURL)
 	fmt.Printf(" -> Size sản phẩm       : %s\n", *targetSize)
@@ -566,7 +700,7 @@ func main() {
 	fmt.Println(" BẮT ĐẦU CHẠY TIẾN TRÌNH...")
 	fmt.Println("================================================================================")
 
-	// 4. Tạo danh sách Tasks (Mỗi task nhận 1 proxy độc lập)
+	// 4. Tạo danh sách Tasks (Mỗi task nhận 1 proxy độc lập ban đầu từ ProxyManager)
 	var tasks []CheckoutTask
 	for i := 0; i < usableCount; i++ {
 		prof := parseDataString(cards[i])
@@ -574,7 +708,10 @@ func main() {
 			continue
 		}
 
-		p := proxies[i]
+		p, ok := pm.GetNextProxy()
+		if !ok {
+			break
+		}
 
 		d := ""
 		if len(discounts) > 0 {
@@ -610,23 +747,26 @@ func main() {
 
 			time.Sleep(time.Duration(rand.Intn(1500)) * time.Millisecond)
 
-			err := runCheckoutWorker(t)
+			finalUsedProxy, err := runCheckoutWorker(t, pm)
 
 			countMutex.Lock()
 			if err == nil {
 				successCount++
 				appendResultFile("results_success.txt", fmt.Sprintf("Thành công: Thẻ %s | Email: %s | Proxy: %s | Mã: %s",
-					maskSecret("card", t.Profile.CardNumber), t.Profile.Email, t.Proxy, t.DiscountCode))
+					maskSecret("card", t.Profile.CardNumber), t.Profile.Email, finalUsedProxy, t.DiscountCode))
 			} else {
 				failCount++
 				appendResultFile("results_failed.txt", fmt.Sprintf("Thất bại: Thẻ %s | Lỗi: %v | Proxy: %s",
-					maskSecret("card", t.Profile.CardNumber), err, t.Proxy))
+					maskSecret("card", t.Profile.CardNumber), err, finalUsedProxy))
 			}
 			countMutex.Unlock()
 		}(task)
 	}
 
 	wg.Wait()
+
+	// Lưu trạng thái proxies.txt: Giữ lại proxy mua thành công lên đầu, loại bỏ proxy hỏng
+	pm.SaveState()
 
 	// Đếm số proxy bị lỗi trong phiên này và tổng số lịch sử
 	failedProxyMutex.Lock()
@@ -656,8 +796,50 @@ func main() {
 	fmt.Println("================================================================================")
 }
 
-// runCheckoutWorker thực thi quy trình cho 1 tác vụ độc lập
-func runCheckoutWorker(task CheckoutTask) (taskErr error) {
+// runCheckoutWorker thực thi quy trình cho 1 tác vụ độc lập, tự động đổi proxy nếu thất bại và giữ lại proxy thành công
+func runCheckoutWorker(task CheckoutTask, pm *ProxyManager) (finalProxy string, taskErr error) {
+	workerID := task.ID
+	profile := task.Profile
+
+	maxProxyAttempts := 20
+	currentProxy := task.Proxy
+
+	for attempt := 1; attempt <= maxProxyAttempts; attempt++ {
+		task.Proxy = currentProxy
+		finalProxy = currentProxy
+
+		logWorker(workerID, "Bắt đầu tác vụ với Profile: %s | Thẻ: %s | Proxy: %s (Lần thử proxy #%d)\n",
+			profile.FullName, maskSecret("card", profile.CardNumber), task.Proxy, attempt)
+
+		err := executeSingleBrowserCheckout(task)
+		if err == nil {
+			// THÀNH CÔNG: Giữ nguyên proxy này, đưa lên đầu file proxies.txt để mua tiếp ở phiên sau!
+			pm.MarkSuccess(currentProxy)
+			logWorker(workerID, "-> HOÀN TẤT TÁC VỤ THÀNH CÔNG với Proxy: %s! (Đã lưu ưu tiên lên đầu file proxies.txt cho phiên tiếp theo)\n", currentProxy)
+			return currentProxy, nil
+		}
+
+		// THẤT BẠI: Bất kể lỗi mạng, proxy die hay lỗi thanh toán/checkout -> Đổi proxy khác!
+		logWorker(workerID, "[!] Tác vụ THẤT BẠI với Proxy [%s] (Lỗi: %v)\n", currentProxy, err)
+		logWorker(workerID, "-> Đang ghi nhận proxy lỗi và tự động đổi sang proxy khác từ file proxies.txt...\n")
+		pm.MarkFailed(currentProxy, err.Error())
+
+		nextProxy, ok := pm.GetNextProxy()
+		if !ok {
+			logWorker(workerID, "[!] ĐÃ HẾT PROXY KHẢ DỤNG TRONG FILE ĐỂ ĐỔI! Dừng tác vụ cho thẻ %s.\n", maskSecret("card", profile.CardNumber))
+			return currentProxy, fmt.Errorf("thất bại và đã hết proxy khả dụng để đổi: %w", err)
+		}
+
+		logWorker(workerID, "-> ĐÃ ĐỔI SANG PROXY MỚI: %s (Chuẩn bị thử lại mua hàng cho thẻ %s)...\n", nextProxy, maskSecret("card", profile.CardNumber))
+		currentProxy = nextProxy
+		time.Sleep(2 * time.Second)
+	}
+
+	return currentProxy, fmt.Errorf("thất bại sau %d lần đổi proxy", maxProxyAttempts)
+}
+
+// executeSingleBrowserCheckout thực thi quy trình điều khiển trình duyệt cho 1 tác vụ
+func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 	workerID := task.ID
 	profile := task.Profile
 
@@ -1673,17 +1855,21 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 						} else {
 							for _, ch := range value {
 								_ = inp.Input(string(ch))
-								delay := 25 + rand.Intn(30)
+								delay := 75 + rand.Intn(50)
 								time.Sleep(time.Duration(delay) * time.Millisecond)
 							}
 						}
 					} else {
-						for _, ch := range value {
+						isCardNumber := strings.Contains(strings.ToLower(fieldName), "số thẻ") || strings.Contains(selector, "number")
+						for idx, ch := range value {
 							_ = inp.Input(string(ch))
-							delay := 25 + rand.Intn(35)
+							delay := 75 + rand.Intn(55) // Tốc độ gõ tự nhiên ~75-130ms/phím
 							time.Sleep(time.Duration(delay) * time.Millisecond)
+							if isCardNumber && (idx+1)%4 == 0 && idx < len(value)-1 {
+								time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
+							}
 						}
-						time.Sleep(80 * time.Millisecond)
+						time.Sleep(150 * time.Millisecond)
 
 						_, _ = frame.Eval(`(sel) => {
 							try {
@@ -1740,9 +1926,9 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					year := cleanDigits[2:]
 
 					_ = inp.Input(string(month[0]))
-					time.Sleep(time.Duration(30+rand.Intn(20)) * time.Millisecond)
+					time.Sleep(time.Duration(80+rand.Intn(40)) * time.Millisecond)
 					_ = inp.Input(string(month[1]))
-					time.Sleep(150 * time.Millisecond)
+					time.Sleep(250 * time.Millisecond)
 
 					valRes, _ := page.Eval(`(sel) => {
 						try {
@@ -1758,13 +1944,15 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 
 					if !strings.Contains(currentVal, "/") {
 						_ = inp.Input("/")
-						time.Sleep(time.Duration(40+rand.Intn(20)) * time.Millisecond)
+						time.Sleep(time.Duration(80+rand.Intn(40)) * time.Millisecond)
+					} else {
+						time.Sleep(time.Duration(200+rand.Intn(60)) * time.Millisecond)
 					}
 
 					_ = inp.Input(string(year[0]))
-					time.Sleep(time.Duration(30+rand.Intn(20)) * time.Millisecond)
+					time.Sleep(time.Duration(80+rand.Intn(40)) * time.Millisecond)
 					_ = inp.Input(string(year[1]))
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(200 * time.Millisecond)
 
 					_, _ = page.Eval(`(sel, mm, yy) => {
 						try {
@@ -1783,17 +1971,21 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 				} else {
 					for _, ch := range value {
 						_ = inp.Input(string(ch))
-						delay := 25 + rand.Intn(30)
+						delay := 75 + rand.Intn(50)
 						time.Sleep(time.Duration(delay) * time.Millisecond)
 					}
 				}
 			} else {
-				for _, ch := range value {
+				isCardNumber := strings.Contains(strings.ToLower(fieldName), "số thẻ") || strings.Contains(selector, "number")
+				for idx, ch := range value {
 					_ = inp.Input(string(ch))
-					delay := 25 + rand.Intn(35)
+					delay := 75 + rand.Intn(55)
 					time.Sleep(time.Duration(delay) * time.Millisecond)
+					if isCardNumber && (idx+1)%4 == 0 && idx < len(value)-1 {
+						time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
+					}
 				}
-				time.Sleep(80 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 
 				_, _ = page.Eval(`(sel) => {
 					try {
@@ -1820,6 +2012,7 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	}
 
 	ensurePaymentSectionVisible(page)
+	waitForPageIdle(page)
 
 	expMonth := profile.ExpMonth
 	if len(expMonth) == 1 {
@@ -1831,19 +2024,25 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	}
 	expCombined := expMonth + expYear
 
+	// Nghỉ tự nhiên trước khi bắt đầu nhập thẻ (800 - 1200ms)
+	time.Sleep(time.Duration(800+rand.Intn(400)) * time.Millisecond)
+
 	_ = fillFieldByExactSelector(page, "Số thẻ", `input#number, input[name="number"]`, profile.CardNumber)
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(time.Duration(900+rand.Intn(300)) * time.Millisecond)
 
 	_ = fillFieldByExactSelector(page, "Hạn dùng", `input#expiry, input[name="expiry"]`, expCombined)
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(time.Duration(800+rand.Intn(300)) * time.Millisecond)
 
 	_ = fillFieldByExactSelector(page, "CVV", `input#verification_value, input[name="verification_value"]`, profile.CVV)
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(time.Duration(800+rand.Intn(300)) * time.Millisecond)
 
 	if profile.FullName != "" {
 		_ = fillFieldByExactSelector(page, "Tên trên thẻ", `input#name, input[name="name"], input[placeholder*="Name on card" i]`, profile.FullName)
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(time.Duration(600+rand.Intn(200)) * time.Millisecond)
 	}
+
+	// Đợi 2s để Shopify iframe hoàn tất kiểm tra Luhn và hợp lệ hóa thẻ
+	time.Sleep(2000 * time.Millisecond)
 
 	return nil
 }
@@ -1945,7 +2144,8 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 				return false;
 			}`)
 
-			time.Sleep(1500 * time.Millisecond)
+			log.Printf("-> ĐÃ NHẬP VÀ BẤM ÁP DỤNG MÃ GIẢM GIÁ '%s' THÀNH CÔNG!\n", discountCode)
+			waitForDiscountAPIToComplete(page)
 			return nil
 		}
 
@@ -1953,6 +2153,59 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 	}
 
 	return fmt.Errorf("không tìm thấy ô reductions")
+}
+
+// waitForDiscountAPIToComplete chờ API áp dụng mã giảm giá gọi xong hoàn tất trước khi sang bước tiếp theo
+func waitForDiscountAPIToComplete(page *rod.Page) {
+	log.Println("-> Đang chờ API mã giảm giá xử lý và tính toán lại bảng giá...")
+	waitTimeout := time.Now().Add(15 * time.Second)
+	time.Sleep(1200 * time.Millisecond)
+
+	for time.Now().Before(waitTimeout) {
+		res, err := page.Eval(`() => {
+			const isBusy = Array.from(document.querySelectorAll('button[class*="loading"], [aria-busy="true"], .spinner, [class*="spinner"], [class*="skeleton"]')).some(el => {
+				const rect = el.getBoundingClientRect();
+				return rect.width > 0 && rect.height > 0;
+			});
+			const hasTag = !!document.querySelector('[class*="reduction-code"], [class*="discount-tag"], [class*="tag"], [class*="badge"], [aria-label*="discount"]');
+			const hasError = !!document.querySelector('#error-for-reduction_code, [id*="reduction-code-error"], [role="alert"]');
+			return { isBusy, isDone: (hasTag || hasError) && !isBusy };
+		}`)
+		if err == nil && res != nil {
+			isBusy := res.Value.Get("isBusy").Bool()
+			isDone := res.Value.Get("isDone").Bool()
+			if isDone {
+				log.Println("-> API MÃ GIẢM GIÁ ĐÃ GỌI XONG HOÀN TẤT!")
+				time.Sleep(1 * time.Second)
+				return
+			}
+			if !isBusy && time.Since(waitTimeout) > -11*time.Second {
+				time.Sleep(1 * time.Second)
+				return
+			}
+		}
+		time.Sleep(600 * time.Millisecond)
+	}
+	log.Println("-> Đã kết thúc chờ API mã giảm giá. Tiếp tục bước điền thẻ.")
+}
+
+// waitForPageIdle chờ cho đến khi trang web không còn spinner hoặc trạng thái bận
+func waitForPageIdle(page *rod.Page) {
+	timeout := time.Now().Add(8 * time.Second)
+	for time.Now().Before(timeout) {
+		res, err := page.Eval(`() => {
+			const hasBusy = Array.from(document.querySelectorAll('[aria-busy="true"], .spinner, [class*="spinner"], [class*="loading"], [class*="skeleton"]')).some(el => {
+				const rect = el.getBoundingClientRect();
+				return rect.width > 0 && rect.height > 0;
+			});
+			return hasBusy;
+		}`)
+		if err == nil && res != nil && !res.Value.Bool() {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	time.Sleep(800 * time.Millisecond)
 }
 
 // clickPayNowButton tìm và bấm nút thanh toán (Pay now / Complete order / Place order)
@@ -2013,28 +2266,276 @@ func extractOrderSummaryAndPayNow(page *rod.Page, profile *UserProfile) error {
 	maxRetries := 2
 	for attempt := 1; attempt <= 1+maxRetries; attempt++ {
 		if attempt > 1 {
+			log.Println("==================================================")
+			log.Printf("-> [RETRY %d/%d] CHỜ CỔNG THANH TOÁN ỔN ĐỊNH HOÀN TOÀN TRƯỚC KHI THỬ LẠI...\n", attempt-1, maxRetries)
+			log.Println("==================================================")
+			waitForPageIdle(page)
+			time.Sleep(2 * time.Second)
+
+			log.Printf("-> [RETRY %d/%d] Đang nhập lại toàn bộ thông tin thẻ tín dụng trước khi bấm Pay now...\n", attempt-1, maxRetries)
 			_ = fillPaymentCardForm(page, profile)
-			time.Sleep(1 * time.Second)
+			time.Sleep(1500 * time.Millisecond)
 		}
 
-		randomWait := 2 + rand.Intn(3) // 2-4 giây
+		// Đảm bảo không còn spinner hay API nền nào đang bận trước khi bấm Pay now
+		waitForPageIdle(page)
+
+		randomWait := 2 + rand.Intn(3)
 		time.Sleep(time.Duration(randomWait) * time.Second)
 
-		clicked, _ := clickPayNowButton(page)
+		clicked, btnName := clickPayNowButton(page)
 		if !clicked {
+			log.Println("-> Nút thanh toán không còn hiển thị (đơn hàng đang được xử lý hoặc đã chuyển trang thành công).")
 			break
 		}
 
-		time.Sleep(4 * time.Second)
+		log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d)!\n", btnName, attempt)
+		log.Println("-> BẮT ĐẦU CHỜ API CỔNG THANH TOÁN GỌI XONG (nút hết 'Processing...' và ngưng spinner)...")
 
-		info, _ := page.Info()
-		if info != nil {
-			urlLower := strings.ToLower(info.URL)
-			if strings.Contains(urlLower, "thank_you") || strings.Contains(urlLower, "orders") || strings.Contains(urlLower, "order-received") {
-				break
+		// CHỜ API THANH TOÁN GỌI XONG HOÀN TOÀN:
+		// Tuyệt đối không thực hiện bước tiếp theo trong khi nút vẫn đang "Processing..."!
+		_, isSuccess, errMsg := waitForPaymentProcessing(page, 75*time.Second)
+
+		if isSuccess {
+			info, _ := page.Info()
+			finalURL := ""
+			if info != nil {
+				finalURL = info.URL
 			}
+			log.Printf("-> API THANH TOÁN ĐÃ GỌI XONG VÀ THÀNH CÔNG!\n-> URL: %s\n", finalURL)
+			return nil
+		}
+
+		log.Printf("-> API THANH TOÁN ĐÃ GỌI XONG VỚI KẾT QUẢ: %s\n", errMsg)
+
+		if attempt < 1+maxRetries {
+			log.Printf("-> [BƯỚC TIẾP THEO] Chờ 5 giây cho hệ thống ổn định hoàn toàn rồi mới thử lại lần %d...\n", attempt)
+			waitForPageIdle(page)
+			time.Sleep(5 * time.Second)
+		} else {
+			log.Printf("[!] Cổng thanh toán kết luận thất bại sau %d lần thử: %s\n", 1+maxRetries, errMsg)
+			return fmt.Errorf("thanh toán không thành công: %s", errMsg)
 		}
 	}
 
-	return nil
+	return fmt.Errorf("thanh toán không thành công: không thể bấm nút Pay now hoặc không nhận được xác nhận đơn hàng")
+}
+
+// waitForPaymentProcessing theo dõi quá trình API xử lý thanh toán (chờ loading/spinner hoàn tất 100% trước khi bước tiếp theo)
+func waitForPaymentProcessing(page *rod.Page, timeout time.Duration) (finished bool, isSuccess bool, errMsg string) {
+	deadline := time.Now().Add(timeout)
+	lastLog := time.Now()
+	startTime := time.Now()
+
+	// 1. Cho cổng thanh toán 2.5s đầu tiên để tiếp nhận request và chuyển sang trạng thái Processing...
+	log.Println("-> Đang đợi cổng thanh toán tiếp nhận yêu cầu và bắt đầu xử lý...")
+	time.Sleep(2500 * time.Millisecond)
+
+	hasObservedProcessing := false
+	settleCounter := 0
+
+	for time.Now().Before(deadline) {
+		// 1. Kiểm tra nếu URL đã chuyển hướng sang trang thành công (Thank you / Orders / Confirmation)
+		info, err := page.Info()
+		if err == nil && info != nil {
+			urlLower := strings.ToLower(info.URL)
+			if strings.Contains(urlLower, "thank_you") || strings.Contains(urlLower, "orders") || strings.Contains(urlLower, "order-received") || strings.Contains(urlLower, "confirmation") || strings.Contains(urlLower, "receipt") || strings.Contains(urlLower, "completed") {
+				return true, true, ""
+			}
+		}
+
+		// 2. Đánh giá trạng thái DOM xem API có đang xử lý (Processing... / spinner / disabled) hoặc đã báo lỗi không
+		evalRes, err := page.Eval(`() => {
+			// A. Kiểm tra trang có thông báo xác nhận thành công không
+			const bodyText = (document.body ? document.body.innerText : '');
+			const bodyTextLower = bodyText.toLowerCase();
+			if (bodyTextLower.includes('thank you for your purchase') || bodyTextLower.includes('your order is confirmed') || bodyTextLower.includes('order confirmed')) {
+				return { isSuccessText: true, isProcessing: false, btnText: '', hasError: false, errorMsg: '' };
+			}
+
+			// B. Kiểm tra THÔNG BÁO LỖI (Error Banners / Alerts từ cổng thanh toán)
+			let detectedError = '';
+			const errSelectors = [
+				'[role="alert"]',
+				'.notice--error',
+				'.notice.notice--error',
+				'[data-banner-level="critical"]',
+				'.field--error',
+				'#error-for-number',
+				'#error-for-expiry',
+				'#error-for-verification_value',
+				'.banner--error',
+				'p[id*="error"]',
+				'[data-error-feedback]',
+				'[aria-live="polite"][class*="error"]',
+				'[aria-live="assertive"]'
+			];
+
+			for (const sel of errSelectors) {
+				const els = Array.from(document.querySelectorAll(sel));
+				for (const el of els) {
+					const rect = el.getBoundingClientRect();
+					if (rect.width > 0 && rect.height > 0) {
+						const t = (el.innerText || el.textContent || '').trim();
+						if (t.length > 3) {
+							detectedError = t;
+							break;
+						}
+					}
+				}
+				if (detectedError) break;
+			}
+
+			if (!detectedError) {
+				if (bodyTextLower.includes('there was an issue processing your payment') || bodyTextLower.includes('try again or use a different payment method')) {
+					detectedError = 'There was an issue processing your payment. Try again or use a different payment method.';
+				} else if (bodyTextLower.includes('card was declined') || bodyTextLower.includes('payment could not be processed')) {
+					detectedError = 'Payment was declined or could not be processed.';
+				}
+			}
+
+			// Nếu đã xuất hiện thông báo lỗi rõ ràng thì KHÔNG CÒN xử lý nữa (API đã trả về thất bại)
+			if (detectedError) {
+				return {
+					isSuccessText: false,
+					isProcessing: false,
+					btnText: '',
+					hasError: true,
+					errorMsg: detectedError
+				};
+			}
+
+			// C. Quét trạng thái API thanh toán đang xử lý (CHỈ KIỂM TRA NÚT THANH TOÁN HOẶC OVERLAY THẬT SỰ)
+			let isProcessing = false;
+			let btnStatusText = '';
+
+			// C1. Tìm chính xác NÚT THANH TOÁN CHÍNH (Pay now / Place order / Complete order)
+			const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'));
+			let payBtn = null;
+			for (const b of allBtns) {
+				const rect = b.getBoundingClientRect();
+				if (rect.width === 0 || rect.height === 0) continue;
+				const t = (b.innerText || b.textContent || b.value || '').trim().toLowerCase();
+				const id = (b.id || '').toLowerCase();
+				if (t.includes('pay now') || t.includes('complete order') || t.includes('place order') || id.includes('pay-button') || (b.type === 'submit' && !id.includes('discount') && !id.includes('coupon'))) {
+					payBtn = b;
+					break;
+				}
+			}
+
+			if (payBtn) {
+				const t = (payBtn.innerText || payBtn.textContent || payBtn.value || '').trim();
+				const tLower = t.toLowerCase();
+
+				const isDis = payBtn.disabled || payBtn.getAttribute('aria-disabled') === 'true';
+				const isBusy = payBtn.getAttribute('aria-busy') === 'true';
+				const hasLoadClass = payBtn.classList.contains('btn--loading') || payBtn.classList.contains('is-loading') || payBtn.classList.contains('loading');
+				const hasRealSpinner = !!payBtn.querySelector('.spinner, [class*="spinner"], [class*="loader"], [data-loading], svg.animate-spin');
+
+				// Nút chỉ đang processing nếu:
+				// - Chữ hiển thị là processing / please wait / authorizing
+				// - Hoặc bị disabled/busy kèm loading class hoặc spinner thực sự
+				if (tLower === 'processing...' || tLower.startsWith('processing') || tLower.includes('authorizing') || tLower.includes('submitting') || tLower.includes('please wait')) {
+					isProcessing = true;
+					btnStatusText = t || 'Processing...';
+				} else if (isBusy || hasLoadClass || (isDis && hasRealSpinner)) {
+					isProcessing = true;
+					btnStatusText = t ? (t + ' (đang xử lý)') : 'Processing...';
+				}
+			}
+
+			// C2. Kiểm tra overlay loading toàn màn hình (nếu có)
+			if (!isProcessing) {
+				const overlays = Array.from(document.querySelectorAll('.loading-overlay, [data-processing], .page-loading'));
+				for (const sp of overlays) {
+					const rect = sp.getBoundingClientRect();
+					if (rect.width > 20 && rect.height > 20) {
+						isProcessing = true;
+						btnStatusText = 'Page Loading Overlay';
+						break;
+					}
+				}
+			}
+
+			// C3. Kiểm tra URL processing hoặc 3DS Challenge
+			const isUrlProcessing = window.location.href.includes('processing') || window.location.href.includes('3d_secure') || window.location.href.includes('challenge') || window.location.href.includes('authenticate');
+			if (!isProcessing && isUrlProcessing) {
+				isProcessing = true;
+				btnStatusText = 'URL Processing/3DS';
+			}
+
+			return {
+				isSuccessText: false,
+				isProcessing: isProcessing,
+				btnText: btnStatusText,
+				hasError: false,
+				errorMsg: ''
+			};
+		}`)
+
+		if err == nil && evalRes != nil {
+			if evalRes.Value.Get("isSuccessText").Bool() {
+				return true, true, ""
+			}
+
+			hasError := evalRes.Value.Get("hasError").Bool()
+			errText := evalRes.Value.Get("errorMsg").String()
+			isProcessing := evalRes.Value.Get("isProcessing").Bool()
+			btnText := evalRes.Value.Get("btnText").String()
+
+			// TRƯỜNG HỢP 1: NẾU ĐÃ CÓ LỖI RÕ RÀNG TỪ CỔNG THANH TOÁN -> NGỪNG CHỜ NGAY LẬP TỨC
+			if hasError {
+				log.Printf("-> [API ĐÃ GỌI XONG - CỔNG THANH TOÁN BÁO LỖI]: %s\n", errText)
+				return true, false, errText
+			}
+
+			// TRƯỜNG HỢP 2: API VẪN ĐANG GỌI (nút đang 'Processing...' hoặc spinner đang quay):
+			// BẮT BUỘC TIẾP TỤC CHỜ! TUYỆT ĐỐI KHÔNG THỰC HIỆN BƯỚC TIẾP THEO!
+			if isProcessing {
+				hasObservedProcessing = true
+				settleCounter = 0
+				if time.Since(lastLog) >= 3*time.Second {
+					if btnText != "" {
+						log.Printf("-> [API ĐANG XỬ LÝ] Nút hiển thị: '%s' ... Đang chờ API gọi xong...\n", btnText)
+					} else {
+						log.Println("-> [API ĐANG XỬ LÝ] Cổng thanh toán đang thực hiện giao dịch... Đang chờ API gọi xong...")
+					}
+					lastLog = time.Now()
+				}
+				time.Sleep(1500 * time.Millisecond)
+				continue
+			}
+
+			// TRƯỜNG HỢP 3: API ĐÃ NGỪNG PROCESSING (nút đã trở về bình thường):
+			if hasObservedProcessing || time.Since(startTime) >= 5*time.Second {
+				settleCounter++
+				if settleCounter < 2 {
+					// Chờ thêm 1 lượt để chắc chắn trạng thái đã ổn định
+					time.Sleep(1200 * time.Millisecond)
+					continue
+				}
+
+				// Kiểm tra xem có chuyển sang trang hoàn tất đơn không
+				infoAfter, _ := page.Info()
+				if infoAfter != nil {
+					uLow := strings.ToLower(infoAfter.URL)
+					if strings.Contains(uLow, "thank_you") || strings.Contains(uLow, "orders") || strings.Contains(uLow, "order-received") || strings.Contains(uLow, "confirmation") {
+						return true, true, ""
+					}
+				}
+
+				// Nếu nút thanh toán đã trở lại bình thường và cho phép bấm lại
+				// Tức là cổng thanh toán đã kết thúc phiên gọi API
+				log.Println("-> API thanh toán đã kết thúc giao dịch (nút đã dừng Processing).")
+				if errText != "" {
+					return true, false, errText
+				}
+				return true, false, "Cổng thanh toán từ chối hoặc giao dịch không hoàn tất"
+			}
+		}
+
+		time.Sleep(1200 * time.Millisecond)
+	}
+
+	return true, false, fmt.Sprintf("Hết thời gian chờ phản hồi thanh toán (%v)", timeout)
 }
