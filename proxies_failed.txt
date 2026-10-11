@@ -3,3 +3,10 @@
 [2026-10-11 11:52:53] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042533:41b761 | Lỗi: navigation failed: net::ERR_CONNECTION_CLOSED
 [2026-10-11 13:11:24] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042534:41b761 | Lỗi: thanh toán không thành công: Hết thời gian chờ phản hồi thanh toán (1m15s)
 [2026-10-11 13:17:19] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042534:41b761 | Lỗi: thanh toán không thành công: Your order’s being processed.
+[2026-10-11 13:34:42] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-24668024:41b761 | Lỗi: thanh toán không thành công: Cổng thanh toán từ chối hoặc giao dịch không hoàn tất
+[2026-10-11 13:53:57] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-24668024:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 14:01:28] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-59357041:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 14:19:27] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-28527283:41b761 | Lỗi: thanh toán không thành công: Your order’s being processed.
+[2026-10-11 14:26:46] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-28527283:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 14:30:50] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-31019189:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-11 14:34:39] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-10821431:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.

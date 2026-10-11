@@ -578,6 +578,7 @@ func main() {
 	cardFileFlag := flag.String("card-file", "cards.txt", "File danh sách thẻ và profile")
 	discountFileFlag := flag.String("discount-file", "discounts.txt", "File danh sách mã giảm giá")
 	telegramFileFlag := flag.String("telegram-file", "telegram.txt", "File cấu hình Telegram Bot (BOT_TOKEN, CHAT_ID)")
+	phonesFileFlag := flag.String("phones-file", "phones.txt", "File danh sách số điện thoại (ngẫu nhiên)")
 	teleTokenFlag := flag.String("tele-token", "", "Telegram Bot Token")
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 
@@ -690,9 +691,14 @@ func main() {
 		sendTelegramAlert(teleCfg, warnMsg)
 	}
 
+	phones, _ := readLinesFromFile(*phonesFileFlag)
+
 	fmt.Printf(" [DANH SÁCH DỮ LIỆU ĐÃ TẢI]\n")
 	fmt.Printf(" -> Tổng số Profile/Thẻ : %d (Sẽ thực thi: %d)\n", len(cards), usableCount)
 	fmt.Printf(" -> Tổng số Proxy       : %d (1 Proxy / 1 Luồng riêng biệt)\n", initialAvailable)
+	if len(phones) > 0 {
+		fmt.Printf(" -> Tổng số SĐT (random): %d (từ %s)\n", len(phones), *phonesFileFlag)
+	}
 	fmt.Printf(" -> Tổng số Mã giảm giá : %d\n", len(discounts))
 	fmt.Printf(" -> URL Sản phẩm        : %s\n", *targetURL)
 	fmt.Printf(" -> Size sản phẩm       : %s\n", *targetSize)
@@ -706,6 +712,10 @@ func main() {
 		prof := parseDataString(cards[i])
 		if prof == nil {
 			continue
+		}
+
+		if len(phones) > 0 {
+			prof.Phone = phones[rand.Intn(len(phones))]
 		}
 
 		p, ok := pm.GetNextProxy()

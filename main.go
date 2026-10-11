@@ -24,7 +24,7 @@ import (
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042534:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-10821431:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -146,6 +146,15 @@ func readLinesFromFile(filePath string) ([]string, error) {
 		lines = append(lines, line)
 	}
 	return lines, scanner.Err()
+}
+
+// getRandomPhone đọc ngẫu nhiên một số điện thoại từ file
+func getRandomPhone(filePath string) string {
+	lines, err := readLinesFromFile(filePath)
+	if err != nil || len(lines) == 0 {
+		return ""
+	}
+	return lines[rand.Intn(len(lines))]
 }
 
 // loadFailedProxies đọc danh sách proxy đã bị lỗi từ file proxies_failed.txt
@@ -571,7 +580,7 @@ func executeSingleCheckout(task CheckoutTask) error {
 
 func main() {
 	targetURL := flag.String("url", "https://www.on.com/en-us/products/5-court-shorts-m-1mg1019/mens/black-apparel-1MG10190553", "URL trang web cần mở")
-	targetSize := flag.String("size", "S", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
+	targetSize := flag.String("size", "M", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
 	proxyRaw := flag.String("proxy", "", "Proxy SOCKS5 riêng biệt (nếu muốn chỉ định trực tiếp)")
 	proxyFileFlag := flag.String("proxy-file", "proxies.txt", "File danh sách proxy SOCKS5")
 	telegramFileFlag := flag.String("telegram-file", "telegram.txt", "File cấu hình Telegram Bot (BOT_TOKEN, CHAT_ID)")
@@ -579,23 +588,30 @@ func main() {
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 	headless := flag.Bool("headless", false, "Chạy ẩn trình duyệt (true/false)")
 
-	dataRaw := flag.String("data", "4160467122625048|07|29|082|Elizabeth Bass|7920 N 107Th #9|Milwaukee|WI|53224|US|4143243575|lizjay2415@gmail.com", "Chuỗi dữ liệu tổng hợp")
+	dataRaw := flag.String("data", "4127770012595490|11|30|043|Clay Shanler|147line street|Feedinghills|MA|01030|US|8602022347|Clayshanler@att.net|73.218.23.95", "Chuỗi dữ liệu tổng hợp")
 	emailFlag := flag.String("email", "", "Email thanh toán (để trống sẽ tự lấy từ -data)")
 	firstNameFlag := flag.String("firstname", "", "Tên (First Name)")
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")
 	addressFlag := flag.String("address", "820 Roxfield Ct, Buford GA 30518", "Địa chỉ gõ vào ô tìm kiếm (hoặc lấy từ -data)")
 	phoneFlag := flag.String("phone", "", "Số điện thoại")
+	phonesFileFlag := flag.String("phones-file", "phones.txt", "File danh sách số điện thoại (ngẫu nhiên)")
 	cardFlag := flag.String("card", "", "Số thẻ tín dụng")
 	monthFlag := flag.String("month", "", "Tháng hết hạn MM")
 	yearFlag := flag.String("year", "", "Năm hết hạn YY")
 	cvvFlag := flag.String("cvv", "", "Mã bảo mật CVV")
-	discountFlag := flag.String("discount", "IDME_ON_20_JOLDOZ", "Mã giảm giá (Discount code)")
+	discountFlag := flag.String("discount", "IDME_ON_20_MFFWSG", "Mã giảm giá (Discount code)")
 
 	flag.Parse()
 
 	profile := parseDataString(*dataRaw)
 	if profile == nil {
 		profile = &UserProfile{}
+	}
+
+	// Lấy số điện thoại ngẫu nhiên từ phones.txt nếu có
+	if randPhone := getRandomPhone(*phonesFileFlag); randPhone != "" {
+		profile.Phone = randPhone
+		log.Printf("-> Đã chọn số điện thoại ngẫu nhiên từ '%s': %s\n", *phonesFileFlag, randPhone)
 	}
 
 	if *emailFlag != "" {
