@@ -21,3 +21,9 @@
 [2026-10-11 22:52:00] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-20864583:41b761 | Lỗi: thanh toán không thành công: Can only be 35 characters long
 [2026-10-11 23:00:26] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-90659757:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
 [2026-10-11 23:00:31] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-70535627:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_CLOSED
+[2026-10-12 21:50:35] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-45956512:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_CLOSED
+[2026-10-12 21:50:38] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-66264494:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_ABORTED
+[2026-10-12 21:50:42] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-47142969:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_ABORTED
+[2026-10-12 21:50:46] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-81061891:41b761 | Lỗi: lỗi khi truy cập trang web: navigation failed: net::ERR_CONNECTION_ABORTED
+[2026-10-12 21:54:30] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-25076825:41b761 | Lỗi: thanh toán không thành công: Your payment details couldn’t be verified. Check your card details and try again.
+[2026-10-12 22:23:44] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-25455193:41b761 | Lỗi: thanh toán không thành công: Enter a valid expiration date

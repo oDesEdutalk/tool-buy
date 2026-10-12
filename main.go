@@ -26,7 +26,7 @@ import (
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-43184919:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-25455193:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -916,7 +916,7 @@ func executeSingleCheckout(task CheckoutTask) error {
 }
 
 func main() {
-	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudtilt-m-3me1010/mens/black-ivory-shoes-3ME10101430", "URL trang web cần mở")
+	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudboom-max-m-3mf3031/mens/lime-raspberry-shoes-3MF30314229", "URL trang web cần mở")
 	targetSize := flag.String("size", "9", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
 	proxyRaw := flag.String("proxy", "", "Proxy SOCKS5 riêng biệt (nếu muốn chỉ định trực tiếp)")
 	proxyFileFlag := flag.String("proxy-file", "proxies.txt", "File danh sách proxy SOCKS5")
@@ -925,7 +925,7 @@ func main() {
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 	headless := flag.Bool("headless", false, "Chạy ẩn trình duyệt (true/false)")
 
-	dataRaw := flag.String("data", "5230810008860473|03|28|187|Charles B Townsend|5924 Kamehameha V Hwy|Kaunakakai|HI|96748|US|8082134457|townsendcharles781@gmail.com|2601:280:ce7d:6e40:e817:bf81:dfb8:4596", "Chuỗi dữ liệu tổng hợp")
+	dataRaw := flag.String("data", "4127770010937223|02|28|753|Joanne Brehm|UNITED STATES||COMENITY BANK|CREDIT|TRADITIONAL|VISA|||||||", "Chuỗi dữ liệu tổng hợp")
 	emailFlag := flag.String("email", "", "Email thanh toán (để trống sẽ tự lấy từ -data)")
 	firstNameFlag := flag.String("firstname", "", "Tên (First Name)")
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")
@@ -1242,12 +1242,8 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 				}
 			}
 
-			customAddr := addrBase
-			if profile.FirstName != "" && !strings.HasPrefix(addrBase, profile.FirstName+". ") {
-				customAddr = fmt.Sprintf("%s. %s", profile.FirstName, addrBase)
-			}
-
-			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (firstname. address)...\n", customAddr)
+			customAddr := formatAddressMax35(profile.FirstName, addrBase, profile.City, profile.ZipCode)
+			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (Độ dài: %d <= 35 ký tự)...\n", customAddr, len(customAddr))
 			updateAddressField(page, customAddr)
 			time.Sleep(1 * time.Second)
 
@@ -1523,8 +1519,325 @@ func getAddressFieldValue(page *rod.Page) string {
 	return ""
 }
 
+// abbreviateStreet viết tắt các từ chỉ loại đường/hướng theo chuẩn bưu điện Mỹ (USPS) để tiết kiệm ký tự
+func abbreviateStreet(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		cleanW := strings.Trim(w, ".,")
+		suffix := ""
+		if strings.HasSuffix(w, ",") {
+			suffix = ","
+		} else if strings.HasSuffix(w, ".") {
+			suffix = "."
+		}
+		switch strings.ToLower(cleanW) {
+		case "boulevard":
+			words[i] = "Blvd" + suffix
+		case "avenue":
+			words[i] = "Ave" + suffix
+		case "street":
+			words[i] = "St" + suffix
+		case "drive":
+			words[i] = "Dr" + suffix
+		case "road":
+			words[i] = "Rd" + suffix
+		case "court":
+			words[i] = "Ct" + suffix
+		case "lane":
+			words[i] = "Ln" + suffix
+		case "parkway":
+			words[i] = "Pkwy" + suffix
+		case "highway":
+			words[i] = "Hwy" + suffix
+		case "circle":
+			words[i] = "Cir" + suffix
+		case "terrace":
+			words[i] = "Ter" + suffix
+		case "place":
+			words[i] = "Pl" + suffix
+		case "apartment":
+			words[i] = "Apt" + suffix
+		case "suite":
+			words[i] = "Ste" + suffix
+		case "north":
+			words[i] = "N" + suffix
+		case "south":
+			words[i] = "S" + suffix
+		case "east":
+			words[i] = "E" + suffix
+		case "west":
+			words[i] = "W" + suffix
+		case "northeast":
+			words[i] = "NE" + suffix
+		case "northwest":
+			words[i] = "NW" + suffix
+		case "southeast":
+			words[i] = "SE" + suffix
+		case "southwest":
+			words[i] = "SW" + suffix
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// formatAddressMax35 xử lý và cắt gọt địa chỉ để luôn đảm bảo <= 35 ký tự theo quy định khắt khe của Shopify Address 1
+func formatAddressMax35(firstName, rawAddr, city, zip string) string {
+	rawAddr = strings.TrimSpace(rawAddr)
+	if rawAddr == "" {
+		return ""
+	}
+
+	// 1. Nếu địa chỉ đã bị gắn tiền tố FirstName trước đó thì loại bỏ để chuẩn hoá lại từ đầu
+	if firstName != "" {
+		lowerFirstName := strings.ToLower(firstName)
+		lowerAddr := strings.ToLower(rawAddr)
+		if strings.HasPrefix(lowerAddr, lowerFirstName+". ") {
+			rawAddr = strings.TrimSpace(rawAddr[len(firstName)+2:])
+		} else if strings.HasPrefix(lowerAddr, lowerFirstName+".") {
+			rawAddr = strings.TrimSpace(rawAddr[len(firstName)+1:])
+		}
+	}
+
+	// 2. Tách chỉ lấy phần Tên đường / Số nhà (Street Address) vì City, State, Zip đã có ô riêng trong Shopify
+	street := rawAddr
+	if idx := strings.Index(street, ","); idx != -1 {
+		street = strings.TrimSpace(street[:idx])
+	}
+	if city != "" && strings.Contains(strings.ToLower(street), strings.ToLower(city)) {
+		idx := strings.Index(strings.ToLower(street), strings.ToLower(city))
+		street = strings.TrimSpace(street[:idx])
+	}
+	if zip != "" && strings.Contains(street, zip) {
+		idx := strings.Index(street, zip)
+		street = strings.TrimSpace(street[:idx])
+	}
+	street = strings.TrimRight(street, ",. ")
+	if street == "" {
+		street = rawAddr
+		if idx := strings.Index(street, ","); idx != -1 {
+			street = strings.TrimSpace(street[:idx])
+		}
+	}
+
+	// 3. Ưu tiên 1: FirstName. Street (đầy đủ)
+	if firstName != "" {
+		cand := fmt.Sprintf("%s. %s", firstName, street)
+		if len(cand) <= 35 {
+			return cand
+		}
+	} else if len(street) <= 35 {
+		return street
+	}
+
+	// 4. Ưu tiên 2: FirstName. Viết tắt tên đường (Boulevard -> Blvd, Street -> St, Court -> Ct...)
+	abbrStreet := abbreviateStreet(street)
+	if firstName != "" {
+		cand := fmt.Sprintf("%s. %s", firstName, abbrStreet)
+		if len(cand) <= 35 {
+			return cand
+		}
+
+		// 5. Ưu tiên 3: Tên viết tắt (Chữ cái đầu F.) + Viết tắt tên đường (Ví dụ: A. 820 Roxfield Ct)
+		runes := []rune(firstName)
+		if len(runes) > 0 {
+			initialCand := fmt.Sprintf("%s. %s", string(runes[0]), abbrStreet)
+			if len(initialCand) <= 35 {
+				return initialCand
+			}
+		}
+	}
+
+	// 6. Ưu tiên 4: Chỉ giữ lại tên đường viết tắt (không kèm tên) nếu vẫn <= 35 ký tự
+	if len(abbrStreet) <= 35 {
+		return abbrStreet
+	}
+
+	// 7. Ưu tiên 5: Cắt cứng tối đa 35 ký tự an toàn
+	result := abbrStreet
+	if len(result) > 35 {
+		result = strings.TrimSpace(result[:35])
+		result = strings.TrimRight(result, ",.- ")
+	}
+	return result
+}
+
+// checkAndFixAddressFieldBeforePayNow kiểm tra lại ô địa chỉ trước khi bấm Pay now.
+// Nếu phát hiện độ dài > 35 ký tự hoặc hệ thống Shopify đang hiển thị lỗi cảnh báo vượt quá 35 ký tự,
+// hàm sẽ tự động chuẩn hoá và điền lại địa chỉ <= 35 ký tự để tránh bị cổng thanh toán từ chối.
+func checkAndFixAddressFieldBeforePayNow(page *rod.Page, profile *UserProfile) {
+	log.Println("-> [BƯỚC 8.0] KIỂM TRA LẠI Ô ĐỊA CHỈ TRƯỚC KHI BẤM 'PAY NOW'...")
+
+	evalRes, err := page.Eval(`() => {
+		const selectors = [
+			'input[name="address1"]',
+			'input[name="shippingAddress.address1"]',
+			'input[name="address"]',
+			'input[name="streetAddress"]',
+			'input#address1',
+			'input#shipping-address1',
+			'input[placeholder*="enter an address" i]',
+			'input[placeholder*="house number" i]',
+			'input[placeholder*="Address" i]',
+			'input[placeholder*="Street" i]',
+			'input[autocomplete="address-line1"]',
+			'input[autocomplete="shipping address-line1"]'
+		];
+
+		let addressInput = null;
+		for (const sel of selectors) {
+			const el = document.querySelector(sel);
+			if (el && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0)) {
+				addressInput = el;
+				break;
+			}
+		}
+		if (!addressInput) {
+			for (const sel of selectors) {
+				const el = document.querySelector(sel);
+				if (el) { addressInput = el; break; }
+			}
+		}
+
+		const currentVal = addressInput ? (addressInput.value || '').trim() : '';
+		const isOver35 = currentVal.length > 35;
+
+		// Kiểm tra các thông báo lỗi liên quan đến địa chỉ hoặc giới hạn 35 ký tự
+		let errorText = '';
+		const errSelectors = [
+			'#error-for-address1',
+			'#error-for-shippingAddress-address1',
+			'[id*="error-for-address"]',
+			'[id*="error-for-shippingAddress"]',
+			'[id*="error-for-street"]',
+			'.field--error .field__message--error',
+			'.field__message--error',
+			'[role="alert"]',
+			'[class*="error-message"]',
+			'[class*="field__message"]'
+		];
+
+		for (const sel of errSelectors) {
+			const els = document.querySelectorAll(sel);
+			for (const el of els) {
+				const txt = (el.innerText || el.textContent || '').trim();
+				if (txt) {
+					const lower = txt.toLowerCase();
+					if (lower.includes('35') || lower.includes('too long') || lower.includes('maximum') ||
+						lower.includes('exceed') || lower.includes('character') || lower.includes('ký tự') ||
+						lower.includes('address') || lower.includes('địa chỉ')) {
+						errorText = txt;
+						break;
+					}
+				}
+			}
+			if (errorText) break;
+		}
+
+		if (!errorText && document.body) {
+			const bText = document.body.innerText || '';
+			const match = bText.match(/.*(?:35\s*(?:characters?|ký tự)|(?:maximum|tối đa|vượt quá)\s*35|address\s+is\s+too\s+long).*/i);
+			if (match) {
+				errorText = match[0].trim();
+			}
+		}
+
+		const hasAriaInvalid = addressInput ? (addressInput.getAttribute('aria-invalid') === 'true') : false;
+
+		return {
+			foundInput: !!addressInput,
+			currentValue: currentVal,
+			length: currentVal.length,
+			isOver35: isOver35,
+			hasErrorMsg: !!errorText,
+			errorText: errorText,
+			hasAriaInvalid: hasAriaInvalid
+		};
+	}`)
+
+	if err != nil || evalRes == nil {
+		log.Printf("[!] Không thể đọc trạng thái ô địa chỉ: %v\n", err)
+		return
+	}
+
+	foundInput := evalRes.Value.Get("foundInput").Bool()
+	currentVal := evalRes.Value.Get("currentValue").String()
+	valLen := evalRes.Value.Get("length").Int()
+	isOver35 := evalRes.Value.Get("isOver35").Bool()
+	hasErrorMsg := evalRes.Value.Get("hasErrorMsg").Bool()
+	errorText := evalRes.Value.Get("errorText").String()
+	hasAriaInvalid := evalRes.Value.Get("hasAriaInvalid").Bool()
+
+	needFix := isOver35 || hasErrorMsg || (hasAriaInvalid && valLen > 30)
+
+	if !needFix {
+		if foundInput {
+			log.Printf("-> [KIỂM TRA ĐỊA CHỈ TRƯỚC KHI PAY NOW]: Ô địa chỉ hợp lệ: '%s' (%d/35 ký tự), không phát hiện lỗi.\n", currentVal, valLen)
+		} else {
+			log.Println("-> [KIỂM TRA ĐỊA CHỈ TRƯỚC KHI PAY NOW]: Không tìm thấy ô địa chỉ trên màn hình hiện tại (có thể đang ở bước thanh toán thẻ).")
+		}
+		return
+	}
+
+	log.Println("--------------------------------------------------")
+	log.Printf("[!] CẢNH BÁO: PHÁT HIỆN LỖI Ô ĐỊA CHỈ TRƯỚC KHI BẤM PAY NOW!\n")
+	log.Printf("    * Địa chỉ hiện tại : '%s' (Độ dài: %d ký tự)\n", currentVal, valLen)
+	if isOver35 {
+		log.Printf("    * Trạng thái       : VƯỢT QUÁ 35 KÝ TỰ (%d > 35)!\n", valLen)
+	}
+	if errorText != "" {
+		log.Printf("    * Thông báo lỗi web: '%s'\n", errorText)
+	}
+	log.Println("-> ĐANG TIẾN HÀNH RÚT GỌN VÀ CẬP NHẬT LẠI Ô ĐỊA CHỈ ĐẢM BẢO <= 35 KÝ TỰ...")
+
+	rawSource := currentVal
+	if rawSource == "" || len(rawSource) > 100 {
+		rawSource = profile.Address
+		if rawSource == "" {
+			rawSource = profile.RawAddress
+		}
+	}
+
+	newAddr := formatAddressMax35(profile.FirstName, rawSource, profile.City, profile.ZipCode)
+	if len(newAddr) > 35 {
+		newAddr = strings.TrimSpace(newAddr[:35])
+		newAddr = strings.TrimRight(newAddr, ",.- ")
+	}
+
+	log.Printf("-> Địa chỉ mới chuẩn hoá: '%s' (Độ dài: %d <= 35 ký tự)\n", newAddr, len(newAddr))
+	updateAddressField(page, newAddr)
+	time.Sleep(1500 * time.Millisecond)
+
+	// Đảm bảo blur để kích hoạt validation của form
+	_, _ = page.Eval(`() => {
+		const inp = document.querySelector('input[name="address1"], input[name="shippingAddress.address1"], input#address1');
+		if (inp) {
+			inp.dispatchEvent(new Event('input', { bubbles: true }));
+			inp.dispatchEvent(new Event('change', { bubbles: true }));
+			inp.dispatchEvent(new Event('blur', { bubbles: true }));
+		}
+	}`)
+	time.Sleep(1 * time.Second)
+
+	// Kiểm tra lại lần cuối
+	finalCheck, _ := page.Eval(`() => {
+		const inp = document.querySelector('input[name="address1"], input[name="shippingAddress.address1"], input#address1');
+		const v = inp ? (inp.value || '').trim() : '';
+		return { value: v, len: v.length };
+	}`)
+	if finalCheck != nil {
+		fVal := finalCheck.Value.Get("value").String()
+		fLen := finalCheck.Value.Get("len").Int()
+		log.Printf("-> [HOÀN TẤT KIỂM TRA ĐỊA CHỈ]: Giá trị thực tế trên web hiện tại: '%s' (%d ký tự <= 35). Lỗi đã được khắc phục!\n", fVal, fLen)
+	}
+	log.Println("--------------------------------------------------")
+}
+
 // updateAddressField cập nhật lại giá trị ô địa chỉ thành firstname.address và đóng gợi ý
 func updateAddressField(page *rod.Page, newAddress string) {
+	if len(newAddress) > 35 {
+		newAddress = strings.TrimSpace(newAddress[:35])
+		newAddress = strings.TrimRight(newAddress, ",.- ")
+	}
 	selectors := []string{
 		`input[name="address1"]`,
 		`input[name="address"]`,
@@ -2726,6 +3039,10 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 		}
 
 		// Đảm bảo không còn spinner hay API nền nào đang bận trước khi bấm Pay now
+		waitForPageIdle(page)
+
+		// Kiểm tra lại 1 lần nữa ô địa chỉ trước khi bấm Pay now (đảm bảo <= 35 ký tự và không có lỗi)
+		checkAndFixAddressFieldBeforePayNow(page, profile)
 		waitForPageIdle(page)
 
 		randomWait := 2 + rand.Intn(3)
