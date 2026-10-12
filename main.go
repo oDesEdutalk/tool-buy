@@ -26,7 +26,7 @@ import (
 )
 
 // DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-25455193:41b761"
+const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-99281140:41b761"
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -916,8 +916,8 @@ func executeSingleCheckout(task CheckoutTask) error {
 }
 
 func main() {
-	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudboom-max-m-3mf3031/mens/lime-raspberry-shoes-3MF30314229", "URL trang web cần mở")
-	targetSize := flag.String("size", "9", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
+	targetURL := flag.String("url", "https://www.on.com/en-us/products/performance-volt-shorts-m-1mg1061/mens/glacier-apparel-1MG10610561", "URL trang web cần mở")
+	targetSize := flag.String("size", "S", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
 	proxyRaw := flag.String("proxy", "", "Proxy SOCKS5 riêng biệt (nếu muốn chỉ định trực tiếp)")
 	proxyFileFlag := flag.String("proxy-file", "proxies.txt", "File danh sách proxy SOCKS5")
 	telegramFileFlag := flag.String("telegram-file", "telegram.txt", "File cấu hình Telegram Bot (BOT_TOKEN, CHAT_ID)")
@@ -925,7 +925,7 @@ func main() {
 	teleChatIDFlag := flag.String("tele-chatid", "", "Telegram Chat ID")
 	headless := flag.Bool("headless", false, "Chạy ẩn trình duyệt (true/false)")
 
-	dataRaw := flag.String("data", "4127770010937223|02|28|753|Joanne Brehm|UNITED STATES||COMENITY BANK|CREDIT|TRADITIONAL|VISA|||||||", "Chuỗi dữ liệu tổng hợp")
+	dataRaw := flag.String("data", "4127770018045680|05|27|223|ROBERT BUTLER|UNITED STATES|COMENITY BANK|CREDIT|TRADITIONAL|VISA||||2107921839|", "Chuỗi dữ liệu tổng hợp")
 	emailFlag := flag.String("email", "", "Email thanh toán (để trống sẽ tự lấy từ -data)")
 	firstNameFlag := flag.String("firstname", "", "Tên (First Name)")
 	lastNameFlag := flag.String("lastname", "", "Họ (Last Name)")
@@ -938,7 +938,7 @@ func main() {
 	monthFlag := flag.String("month", "", "Tháng hết hạn MM")
 	yearFlag := flag.String("year", "", "Năm hết hạn YY")
 	cvvFlag := flag.String("cvv", "", "Mã bảo mật CVV")
-	discountFlag := flag.String("discount", "IDME_ON_20_MFFWSG", "Mã giảm giá (Discount code)")
+	discountFlag := flag.String("discount", "IDME_ON_20_MEYAEK", "Mã giảm giá (Discount code)")
 
 	flag.Parse()
 
@@ -1133,7 +1133,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	if emailEl != nil {
 		log.Printf("-> Đang gõ Email: '%s' (Human Typing)...\n", profile.Email)
 		_ = humanType(page, emailEl, profile.Email)
-		time.Sleep(800 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 	} else {
 		log.Println("[!] Thử tìm ô Email qua JavaScript...")
 		_, _ = page.Eval(`(val) => {
@@ -1170,7 +1170,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	})
 	if firstNameEl != nil {
 		_ = humanType(page, firstNameEl, profile.FirstName)
-		time.Sleep(600 * time.Millisecond)
+		time.Sleep(120 * time.Millisecond)
 	}
 
 	// 4. Tìm và gõ Last name
@@ -1188,7 +1188,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	})
 	if lastNameEl != nil {
 		_ = humanType(page, lastNameEl, profile.LastName)
-		time.Sleep(600 * time.Millisecond)
+		time.Sleep(120 * time.Millisecond)
 	}
 
 	// 5. Tìm và gõ Address, sau đó chọn Suggestion đầu tiên
@@ -1273,7 +1273,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 
 		if phoneEl != nil {
 			_ = humanType(page, phoneEl, profile.Phone)
-			time.Sleep(800 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond)
 		} else {
 			log.Println("[!] Không tìm thấy ô nhập Phone")
 		}
@@ -1912,22 +1912,22 @@ func findInputField(page *rod.Page, selectors []string) *rod.Element {
 	return nil
 }
 
-// humanType mô phỏng gõ phím con người an toàn
+// humanType mô phỏng gõ phím con người an toàn nhưng siêu tốc
 func humanType(page *rod.Page, el *rod.Element, text string) error {
 	if el == nil {
 		return fmt.Errorf("element is nil")
 	}
 
 	_ = el.ScrollIntoView()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 	_ = el.Click(proto.InputMouseButtonLeft, 1)
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 
 	_ = el.SelectAllText()
 
 	for _, ch := range text {
 		_ = el.Input(string(ch))
-		delay := 25 + rand.Intn(35)
+		delay := 5 + rand.Intn(10)
 		time.Sleep(time.Duration(delay) * time.Millisecond)
 	}
 
@@ -1940,7 +1940,7 @@ func humanType(page *rod.Page, el *rod.Element, text string) error {
 		}
 	}`, text)
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(1510 * time.Millisecond)
 	return nil
 }
 
@@ -2461,9 +2461,9 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 
 							// 1. Gõ 2 số đầu (Tháng MM) với delay tự nhiên
 							_ = inp.Input(string(month[0]))
-							time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+							time.Sleep(time.Duration(10+rand.Intn(15)) * time.Millisecond)
 							_ = inp.Input(string(month[1]))
-							time.Sleep(200 * time.Millisecond)
+							time.Sleep(60 * time.Millisecond)
 
 							// 2. Kiểm tra xem ô input có tự động chèn dấu '/' chưa
 							valRes, _ := frame.Eval(`(sel) => {
@@ -2481,16 +2481,16 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 							// Nếu hệ thống không tự chèn '/' thì ta chủ động gõ '/'
 							if !strings.Contains(currentVal, "/") {
 								_ = inp.Input("/")
-								time.Sleep(time.Duration(50+rand.Intn(30)) * time.Millisecond)
+								time.Sleep(time.Duration(15+rand.Intn(15)) * time.Millisecond)
 							} else {
-								time.Sleep(time.Duration(150+rand.Intn(50)) * time.Millisecond)
+								time.Sleep(time.Duration(40+rand.Intn(20)) * time.Millisecond)
 							}
 
 							// 3. Gõ 2 số sau (Năm YY) với delay tự nhiên
 							_ = inp.Input(string(year[0]))
-							time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+							time.Sleep(time.Duration(10+rand.Intn(15)) * time.Millisecond)
 							_ = inp.Input(string(year[1]))
-							time.Sleep(150 * time.Millisecond)
+							time.Sleep(50 * time.Millisecond)
 
 							// 4. Đảm bảo giá trị đã hợp lệ (có dấu '/') và kích hoạt đầy đủ các sự kiện validation
 							_, _ = frame.Eval(`(sel, mm, yy) => {
@@ -2510,7 +2510,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 						} else {
 							for _, ch := range value {
 								_ = inp.Input(string(ch))
-								delay := 35 + rand.Intn(40)
+								delay := 8 + rand.Intn(10)
 								time.Sleep(time.Duration(delay) * time.Millisecond)
 							}
 						}
@@ -2518,13 +2518,13 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 						isCardNumber := strings.Contains(strings.ToLower(fieldName), "số thẻ") || strings.Contains(selector, "number")
 						for idx, ch := range value {
 							_ = inp.Input(string(ch))
-							delay := 75 + rand.Intn(55) // Tốc độ gõ tự nhiên ~75-130ms/phím
+							delay := 8 + rand.Intn(10)
 							time.Sleep(time.Duration(delay) * time.Millisecond)
 							if isCardNumber && (idx+1)%4 == 0 && idx < len(value)-1 {
-								time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
+								time.Sleep(time.Duration(30+rand.Intn(20)) * time.Millisecond)
 							}
 						}
-						time.Sleep(150 * time.Millisecond)
+						time.Sleep(50 * time.Millisecond)
 
 						_, _ = frame.Eval(`(sel) => {
 							try {
@@ -2584,9 +2584,9 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					year := cleanDigits[2:]
 
 					_ = inp.Input(string(month[0]))
-					time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+					time.Sleep(time.Duration(10+rand.Intn(15)) * time.Millisecond)
 					_ = inp.Input(string(month[1]))
-					time.Sleep(200 * time.Millisecond)
+					time.Sleep(60 * time.Millisecond)
 
 					valRes, _ := page.Eval(`(sel) => {
 						try {
@@ -2602,15 +2602,15 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 
 					if !strings.Contains(currentVal, "/") {
 						_ = inp.Input("/")
-						time.Sleep(time.Duration(50+rand.Intn(30)) * time.Millisecond)
+						time.Sleep(time.Duration(15+rand.Intn(15)) * time.Millisecond)
 					} else {
-						time.Sleep(time.Duration(150+rand.Intn(50)) * time.Millisecond)
+						time.Sleep(time.Duration(40+rand.Intn(20)) * time.Millisecond)
 					}
 
 					_ = inp.Input(string(year[0]))
-					time.Sleep(time.Duration(40+rand.Intn(30)) * time.Millisecond)
+					time.Sleep(time.Duration(10+rand.Intn(15)) * time.Millisecond)
 					_ = inp.Input(string(year[1]))
-					time.Sleep(150 * time.Millisecond)
+					time.Sleep(50 * time.Millisecond)
 
 					_, _ = page.Eval(`(sel, mm, yy) => {
 						try {
@@ -2629,7 +2629,7 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 				} else {
 					for _, ch := range value {
 						_ = inp.Input(string(ch))
-						delay := 35 + rand.Intn(40)
+						delay := 8 + rand.Intn(10)
 						time.Sleep(time.Duration(delay) * time.Millisecond)
 					}
 				}
@@ -2637,13 +2637,13 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 				isCardNumber := strings.Contains(strings.ToLower(fieldName), "số thẻ") || strings.Contains(selector, "number")
 				for idx, ch := range value {
 					_ = inp.Input(string(ch))
-					delay := 75 + rand.Intn(55)
+					delay := 8 + rand.Intn(10)
 					time.Sleep(time.Duration(delay) * time.Millisecond)
 					if isCardNumber && (idx+1)%4 == 0 && idx < len(value)-1 {
-						time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
+						time.Sleep(time.Duration(30+rand.Intn(20)) * time.Millisecond)
 					}
 				}
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 
 				_, _ = page.Eval(`(sel) => {
 					try {
@@ -2694,29 +2694,29 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	log.Printf("-> Dữ liệu thẻ cần điền: Số thẻ: %s | Hạn: %s/%s (%s) | CVV: %s\n",
 		maskSecret("card", profile.CardNumber), expMonth, expYear, expCombined, maskSecret("cvv", profile.CVV))
 
-	// Nghỉ tự nhiên trước khi bắt đầu nhập thẻ (800 - 1200ms)
-	time.Sleep(time.Duration(800+rand.Intn(400)) * time.Millisecond)
+	// Nghỉ tự nhiên trước khi bắt đầu nhập thẻ (200 - 300ms)
+	time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
 
 	// 1. Điền Số thẻ: id="number" hoặc name="number"
 	cardOk := fillFieldByExactSelector(page, "Số thẻ (Card Number)", `input#number, input[name="number"]`, profile.CardNumber)
-	time.Sleep(time.Duration(900+rand.Intn(300)) * time.Millisecond)
+	time.Sleep(time.Duration(150+rand.Intn(80)) * time.Millisecond)
 
 	// 2. Điền Ngày hết hạn: id="expiry" hoặc name="expiry"
 	expiryOk := fillFieldByExactSelector(page, "Hạn dùng (Expiration Date)", `input#expiry, input[name="expiry"]`, expCombined)
-	time.Sleep(time.Duration(800+rand.Intn(300)) * time.Millisecond)
+	time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 	// 3. Điền CVV: id="verification_value" hoặc name="verification_value"
 	cvvOk := fillFieldByExactSelector(page, "Mã bảo mật (CVV)", `input#verification_value, input[name="verification_value"]`, profile.CVV)
-	time.Sleep(time.Duration(800+rand.Intn(300)) * time.Millisecond)
+	time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 	// 4. Điền Tên trên thẻ nếu có ô Name on card: id="name" hoặc name="name"
 	if profile.FullName != "" {
 		fillFieldByExactSelector(page, "Tên trên thẻ (Name on Card)", `input#name, input[name="name"], input[placeholder*="Name on card" i]`, profile.FullName)
-		time.Sleep(time.Duration(600+rand.Intn(200)) * time.Millisecond)
+		time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 	}
 
-	// Đợi 2s để iframe Shopify hoàn tất kiểm tra Luhn và hợp lệ hóa thẻ
-	time.Sleep(2000 * time.Millisecond)
+	// Đợi iframe Shopify hoàn tất kiểm tra Luhn và hợp lệ hóa thẻ
+	time.Sleep(600 * time.Millisecond)
 
 	if cardOk && expiryOk && cvvOk {
 		log.Println("==================================================")
@@ -2799,13 +2799,13 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 			_, _ = reductionsInput.Eval(`() => { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); }`)
 			time.Sleep(100 * time.Millisecond)
 
-			// Gõ mã giảm giá
+			// Gõ mã giảm giá siêu tốc
 			for _, ch := range discountCode {
 				_ = reductionsInput.Input(string(ch))
-				delay := 25 + rand.Intn(30)
+				delay := 6 + rand.Intn(10)
 				time.Sleep(time.Duration(delay) * time.Millisecond)
 			}
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 
 			// Gửi phím Enter
 			_ = page.Keyboard.Press(input.Enter)
