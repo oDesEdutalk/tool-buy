@@ -885,9 +885,58 @@ func appendResultFile(filename, content string) {
 	_, _ = f.WriteString(fmt.Sprintf("[%s] %s\n", timestamp, content))
 }
 
+// ProductItem chứa URL sản phẩm và size cần chọn
+type ProductItem struct {
+	URL  string
+	Size string
+}
+
+// loadProductItems đọc danh sách sản phẩm và size từ file (định dạng: URL|Size)
+func loadProductItems(filePath, defaultURL, defaultSize string) []ProductItem {
+	lines, err := readLinesFromFile(filePath)
+	if err != nil || len(lines) == 0 {
+		if defaultURL != "" {
+			return []ProductItem{{URL: defaultURL, Size: defaultSize}}
+		}
+		return nil
+	}
+
+	var items []ProductItem
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		u := strings.TrimSpace(parts[0])
+		s := defaultSize
+		if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+			s = strings.TrimSpace(parts[1])
+		}
+		if u != "" {
+			items = append(items, ProductItem{URL: u, Size: s})
+		}
+	}
+
+	if len(items) == 0 && defaultURL != "" {
+		items = append(items, ProductItem{URL: defaultURL, Size: defaultSize})
+	}
+	return items
+}
+
+// getRandomProduct chọn ngẫu nhiên một sản phẩm từ danh sách hoặc trả về giá trị mặc định
+func getRandomProduct(products []ProductItem, defaultURL, defaultSize string) (string, string) {
+	if len(products) > 0 {
+		p := products[rand.Intn(len(products))]
+		return p.URL, p.Size
+	}
+	return defaultURL, defaultSize
+}
+
 func main() {
 	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudboom-max-m-3mf3031/mens/lime-raspberry-shoes-3MF30314229", "URL trang web cần mở")
 	targetSize := flag.String("size", "9", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
+	productsFileFlag := flag.String("products-file", "products.txt", "File danh sách URL sản phẩm và size (URL|Size)")
 	headlessFlag := flag.Bool("headless", true, "Chạy ẩn trình duyệt để tối ưu tài nguyên (true/false)")
 	threadsFlag := flag.Int("threads", 0, "Số luồng chạy đồng thời (1 - 50)")
 
@@ -984,6 +1033,9 @@ func main() {
 		}
 	}
 
+	// Đọc danh sách sản phẩm và size từ file (URL|Size), nếu file không có sẽ dùng URL và Size từ cờ lệnh
+	products := loadProductItems(*productsFileFlag, *targetURL, *targetSize)
+
 	// Khởi tạo ProxyManager quản lý danh sách proxy, tự động xoay vòng khi lỗi và lưu proxy thành công
 	pm := NewProxyManager(*proxyFileFlag, "proxies_failed.txt", teleCfg)
 	initialAvailable := pm.AvailableCount()
@@ -1024,8 +1076,12 @@ func main() {
 	}
 	fmt.Printf(" -> Tổng số Mã giảm giá : %d\n", len(discounts))
 	fmt.Printf(" -> Địa chỉ nhận hàng   : %s\n", *addressFlag)
-	fmt.Printf(" -> URL Sản phẩm        : %s\n", *targetURL)
-	fmt.Printf(" -> Size sản phẩm       : %s\n", *targetSize)
+	if len(products) > 1 || (len(products) == 1 && products[0].URL != *targetURL) {
+		fmt.Printf(" -> Sản phẩm & Size     : %d mục (ngẫu nhiên từ %s: URL|Size)\n", len(products), *productsFileFlag)
+	} else {
+		fmt.Printf(" -> URL Sản phẩm        : %s\n", *targetURL)
+		fmt.Printf(" -> Size sản phẩm       : %s\n", *targetSize)
+	}
 	fmt.Println("================================================================================")
 	fmt.Println(" BẮT ĐẦU CHẠY TIẾN TRÌNH...")
 	fmt.Println("================================================================================")
@@ -1071,10 +1127,12 @@ func main() {
 			d = discounts[i%len(discounts)]
 		}
 
+		taskURL, taskSize := getRandomProduct(products, *targetURL, *targetSize)
+
 		tasks = append(tasks, CheckoutTask{
 			ID:           i + 1,
-			URL:          *targetURL,
-			Size:         *targetSize,
+			URL:          taskURL,
+			Size:         taskSize,
 			Proxy:        p,
 			Profile:      prof,
 			DiscountCode: d,
@@ -1290,7 +1348,7 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 
 	logWorker(workerID, "\n%s\n", fpProfile.FormatBitBrowserTable(task.ID, task.Proxy, time.Now().Format("2006-01-02 15:04:05")))
 
-	logWorker(workerID, "Đang mở URL: %s ...\n", task.URL)
+	logWorker(workerID, "Đang mở URL: %s (Size: '%s') ...\n", task.URL, task.Size)
 	err = page.Navigate(task.URL)
 	if err != nil {
 		logWorker(workerID, "[!] Lỗi khi truy cập trang web: %v\n", err)

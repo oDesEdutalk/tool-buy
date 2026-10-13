@@ -40,3 +40,5 @@
 [2026-10-13 08:00:46] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-87927290:41b761 | Lỗi: thanh toán không thành công: There was an issue processing your payment. Try again or use a different payment method.
 [2026-10-13 08:00:59] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-38918856:41b761 | Lỗi: thanh toán không thành công: Cổng thanh toán từ chối hoặc giao dịch không hoàn tất
 [2026-10-13 08:01:29] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-80562635:41b761 | Lỗi: thanh toán không thành công: Your order’s being processed.
+[2026-10-13 08:28:07] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-78542932:41b761 | Lỗi: thanh toán không thành công sau 7 lần thử thẻ: Your order’s being processed.
+[2026-10-13 08:28:29] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-95707601:41b761 | Lỗi: thanh toán không thành công sau 7 lần thử thẻ: Your order’s being processed.

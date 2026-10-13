@@ -854,7 +854,7 @@ func executeSingleCheckout(task CheckoutTask) error {
 
 	log.Printf("\n%s\n", fpProfile.FormatBitBrowserTable(1, task.Proxy, time.Now().Format("2006-01-02 15:04:05")))
 
-	log.Printf("-> Đang truy cập URL: %s ...\n", task.URL)
+	log.Printf("-> Đang truy cập URL: %s (Size: '%s') ...\n", task.URL, task.Size)
 	err = page.Navigate(task.URL)
 	if err != nil {
 		return fmt.Errorf("lỗi khi truy cập trang web: %w", err)
@@ -920,9 +920,58 @@ func executeSingleCheckout(task CheckoutTask) error {
 	return nil
 }
 
+// ProductItem chứa URL sản phẩm và size cần chọn
+type ProductItem struct {
+	URL  string
+	Size string
+}
+
+// loadProductItems đọc danh sách sản phẩm và size từ file (định dạng: URL|Size)
+func loadProductItems(filePath, defaultURL, defaultSize string) []ProductItem {
+	lines, err := readLinesFromFile(filePath)
+	if err != nil || len(lines) == 0 {
+		if defaultURL != "" {
+			return []ProductItem{{URL: defaultURL, Size: defaultSize}}
+		}
+		return nil
+	}
+
+	var items []ProductItem
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		u := strings.TrimSpace(parts[0])
+		s := defaultSize
+		if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+			s = strings.TrimSpace(parts[1])
+		}
+		if u != "" {
+			items = append(items, ProductItem{URL: u, Size: s})
+		}
+	}
+
+	if len(items) == 0 && defaultURL != "" {
+		items = append(items, ProductItem{URL: defaultURL, Size: defaultSize})
+	}
+	return items
+}
+
+// getRandomProduct chọn ngẫu nhiên một sản phẩm từ danh sách hoặc trả về giá trị mặc định
+func getRandomProduct(products []ProductItem, defaultURL, defaultSize string) (string, string) {
+	if len(products) > 0 {
+		p := products[rand.Intn(len(products))]
+		return p.URL, p.Size
+	}
+	return defaultURL, defaultSize
+}
+
 func main() {
 	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudtilt-arc-m-3mg3033/mens/alloy-ivory-shoes-3MG30333228", "URL trang web cần mở")
 	targetSize := flag.String("size", "9.5", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
+	productsFileFlag := flag.String("products-file", "products.txt", "File danh sách URL sản phẩm và size (URL|Size)")
 	proxyRaw := flag.String("proxy", "", "Proxy SOCKS5 riêng biệt (nếu muốn chỉ định trực tiếp)")
 	proxyFileFlag := flag.String("proxy-file", "proxies.txt", "File danh sách proxy SOCKS5")
 	telegramFileFlag := flag.String("telegram-file", "telegram.txt", "File cấu hình Telegram Bot (BOT_TOKEN, CHAT_ID)")
@@ -1002,11 +1051,17 @@ func main() {
 
 	teleCfg := loadTelegramConfig(*telegramFileFlag, *teleTokenFlag, *teleChatIDFlag)
 
+	products := loadProductItems(*productsFileFlag, *targetURL, *targetSize)
+
 	log.Println("==================================================")
 	log.Println("     TOOL AUTOMATION BROWSER SOCKS5 (GOLANG)      ")
 	log.Println("==================================================")
-	log.Printf("-> URL mục tiêu  : %s\n", *targetURL)
-	log.Printf("-> Size cần mua  : %s\n", *targetSize)
+	if len(products) > 1 || (len(products) == 1 && products[0].URL != *targetURL) {
+		log.Printf("-> Danh sách Sản phẩm : %d mục (ngẫu nhiên từ %s: URL|Size)\n", len(products), *productsFileFlag)
+	} else {
+		log.Printf("-> URL mục tiêu  : %s\n", *targetURL)
+		log.Printf("-> Size cần mua  : %s\n", *targetSize)
+	}
 	log.Printf("-> Email         : %s\n", profile.Email)
 	log.Printf("-> Họ và Tên     : %s %s\n", profile.FirstName, profile.LastName)
 	log.Printf("-> Địa chỉ tìm   : %s\n", profile.RawAddress)
@@ -1051,9 +1106,11 @@ func main() {
 			}
 		}
 
+		chosenURL, chosenSize := getRandomProduct(products, *targetURL, *targetSize)
+
 		task := CheckoutTask{
-			URL:          *targetURL,
-			Size:         *targetSize,
+			URL:          chosenURL,
+			Size:         chosenSize,
 			Proxy:        currentProxy,
 			Profile:      profile,
 			DiscountCode: *discountFlag,
