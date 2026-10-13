@@ -105,7 +105,7 @@ flowchart TD
    - Điền số thẻ, ngày hết hạn (tự động phân tích định dạng `MM / YY`), mã bảo mật CVV và Tên chủ thẻ.
 7. **Xác nhận thanh toán (Pay Now)**:
    - Đợi hệ thống cập nhật tổng tiền sau giảm giá.
-   - Bấm `Pay now` (tự động thử lại tối đa 6 lần retry, tổng cộng 7 lần thử nếu có lỗi hoặc cần nhập lại thẻ).
+   - Bấm `Pay now` (tự động thử lại tối đa 3 lần retry, tổng cộng 4 lần thử nếu có lỗi hoặc cần nhập lại thẻ).
 
 ---
 
