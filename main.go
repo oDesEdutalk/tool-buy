@@ -429,18 +429,16 @@ func getRandomPhone(filePath string) string {
 	return lines[rand.Intn(len(lines))]
 }
 
-// defaultUserAgents danh sách User-Agent hiện đại dự phòng
+// defaultUserAgents danh sách User-Agent hiện đại dự phòng chuẩn BitBrowser Windows
 var defaultUserAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
 }
 
 // getRandomUserAgent đọc ngẫu nhiên một User-Agent từ file (hoặc dùng danh sách mặc định)
@@ -783,14 +781,18 @@ func executeSingleCheckout(task CheckoutTask) error {
 
 	winW, winH := getRandomResolution()
 
+	// Tự sinh bộ vân tay ngẫu nhiên độc lập chuẩn BitBrowser (bao gồm Kernel, GPU, Geolocation, Timezone)
+	fpProfile := fingerprint.GenerateRandomProfile(winW, winH, ua)
+
 	l := launcher.New().
 		Leakless(false).
 		Headless(task.Headless).
 		Devtools(false).
-		Set("user-agent", ua).
+		Set("user-agent", fpProfile.UserAgent).
 		Set("disable-blink-features", "AutomationControlled").
 		Set("force-webrtc-ip-handling-policy", "default_public_interface_only").
-		Set("lang", "en-US")
+		Set("lang", "en-US").
+		Set("accept-lang", "en-US,en;q=0.9")
 
 	if userDataDir != "" {
 		l = l.UserDataDir(userDataDir)
@@ -838,16 +840,19 @@ func executeSingleCheckout(task CheckoutTask) error {
 		page = browser.MustPage()
 	}
 
-	// Tự sinh và tiêm vân tay ngẫu nhiên độc lập chuẩn BitBrowser
-	fpProfile := fingerprint.GenerateRandomProfile(winW, winH)
+	// Tiêm vân tay chuẩn BitBrowser vào page (CDP Timezone, GPS, Locale, UserAgent và JS API)
 	if err := fpProfile.ApplyToPage(page); err != nil {
 		log.Printf("[!] Cảnh báo: Lỗi áp dụng vân tay: %v\n", err)
 	}
 
 	page.MustSetWindow(0, 0, winW, winH)
-	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{UserAgent: ua})
+	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
+		UserAgent:      fpProfile.UserAgent,
+		AcceptLanguage: "en-US,en;q=0.9",
+		Platform:       "Win32",
+	})
 
-	log.Printf("-> [THÔNG TIN GIẢ LẬP TRÌNH DUYỆT]:\n   * User-Agent: %s\n   * Màn hình  : %dx%d\n   * Vân tay (BitBrowser-Grade): %s\n", ua, winW, winH, fpProfile.Summary())
+	log.Printf("\n%s\n", fpProfile.FormatBitBrowserTable(1, task.Proxy, time.Now().Format("2006-01-02 15:04:05")))
 
 	log.Printf("-> Đang truy cập URL: %s ...\n", task.URL)
 	err = page.Navigate(task.URL)
