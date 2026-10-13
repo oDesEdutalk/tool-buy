@@ -3039,17 +3039,17 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 		log.Println("--------------------------------------------------")
 	}
 
-	// 3. Thực hiện bấm nút "Pay now" (Thử tối đa 3 lần: lần 1 + 2 lần retry có nhập lại thẻ)
-	maxRetries := 2
+	// 3. Thực hiện bấm nút "Pay now" (Thử tối đa 7 lần: lần 1 + 6 lần retry có nhập lại thẻ)
+	maxRetries := 6
 	for attempt := 1; attempt <= 1+maxRetries; attempt++ {
 		if attempt > 1 {
 			log.Println("==================================================")
-			log.Printf("-> [RETRY %d/%d] CHỜ CỔNG THANH TOÁN ỔN ĐỊNH HOÀN TOÀN TRƯỚC KHI THỬ LẠI...\n", attempt-1, maxRetries)
+			log.Printf("-> [RETRY %d/%d (Lần %d/7)] CHỜ CỔNG THANH TOÁN ỔN ĐỊNH HOÀN TOÀN TRƯỚC KHI THỬ LẠI...\n", attempt-1, maxRetries, attempt)
 			log.Println("==================================================")
 			waitForPageIdle(page)
 			time.Sleep(2 * time.Second)
 
-			log.Printf("-> [RETRY %d/%d] Đang nhập lại toàn bộ thông tin thẻ tín dụng trước khi bấm Pay now...\n", attempt-1, maxRetries)
+			log.Printf("-> [RETRY %d/%d (Lần %d/7)] Đang nhập lại toàn bộ thông tin thẻ tín dụng trước khi bấm Pay now...\n", attempt-1, maxRetries, attempt)
 			_ = fillPaymentCardForm(page, profile)
 			time.Sleep(1500 * time.Millisecond)
 		}
@@ -3064,10 +3064,10 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 		randomWait := 2 + rand.Intn(3)
 		time.Sleep(time.Duration(randomWait) * time.Second)
 
-		log.Printf("-> Đang kiểm tra và bấm nút 'Pay now' (Lần %d/%d)...\n", attempt, 1+maxRetries)
+		log.Printf("-> Đang kiểm tra và bấm nút 'Pay now' (Lần %d/7)...\n", attempt)
 		clicked, btnName := clickPayNowButton(page)
 		if clicked {
-			log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d)!\n", btnName, attempt)
+			log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d/7)!\n", btnName, attempt)
 		} else {
 			log.Println("-> Nút thanh toán không còn hiển thị. Đang kiểm tra xem đơn hàng đã chuyển trang Thank You thành công hay chưa...")
 			time.Sleep(2 * time.Second)
@@ -3118,12 +3118,12 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 		log.Printf("-> API THANH TOÁN ĐÃ GỌI XONG VỚI KẾT QUẢ: %s\n", errMsg)
 
 		if attempt < 1+maxRetries {
-			log.Printf("-> [BƯỚC TIẾP THEO] Chờ 5 giây cho hệ thống ổn định hoàn toàn rồi mới thử lại lần %d...\n", attempt)
+			log.Printf("-> [BƯỚC TIẾP THEO] Chờ 5 giây cho hệ thống ổn định hoàn toàn rồi mới thử lại lần %d/7...\n", attempt+1)
 			waitForPageIdle(page)
 			time.Sleep(5 * time.Second)
 		} else {
-			log.Printf("[!] Cổng thanh toán kết luận thất bại sau %d lần thử: %s\n", 1+maxRetries, errMsg)
-			return fmt.Errorf("thanh toán không thành công: %s", errMsg)
+			log.Printf("[!] Cổng thanh toán kết luận thất bại sau 7 lần thử: %s\n", errMsg)
+			return fmt.Errorf("thanh toán không thành công sau 7 lần thử: %s", errMsg)
 		}
 	}
 

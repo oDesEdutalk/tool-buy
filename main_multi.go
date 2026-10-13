@@ -1300,54 +1300,76 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 	time.Sleep(3 * time.Second)
 
 	// 1. Tắt banner cookies
+	logWorker(workerID, "-> [BƯỚC 1/8] Đang kiểm tra và tắt banner Cookies nếu có...\n")
 	dismissCookieConsent(page)
+	logWorker(workerID, "-> [BƯỚC 1/8] Hoàn tất kiểm tra Cookie banner.\n")
 
 	// 2. Chọn Size
+	logWorker(workerID, "-> [BƯỚC 2/8] Đang chọn Size: '%s'...\n", task.Size)
 	err = selectProductSize(page, task.Size)
 	if err != nil {
-		logWorker(workerID, "[!] Lỗi chọn size %s: %v\n", task.Size, err)
+		logWorker(workerID, "[!] [BƯỚC 2/8] Lỗi chọn size %s: %v\n", task.Size, err)
+	} else {
+		logWorker(workerID, "-> [BƯỚC 2/8] Đã chọn xong Size '%s' thành công!\n", task.Size)
 	}
 	time.Sleep(1 * time.Second)
 
 	// 3. Bấm Add to bag
+	logWorker(workerID, "-> [BƯỚC 3/8] Đang bấm nút 'Add to bag'...\n")
 	err = clickAddToBag(page)
 	if err != nil {
-		logWorker(workerID, "[!] Lỗi bấm Add to bag: %v\n", err)
+		logWorker(workerID, "[!] [BƯỚC 3/8] Lỗi bấm Add to bag: %v\n", err)
 		return err
 	}
+	logWorker(workerID, "-> [BƯỚC 3/8] Đã thêm sản phẩm vào giỏ hàng thành công! Đang chờ giỏ hàng cập nhật...\n")
 	time.Sleep(2500 * time.Millisecond)
 
 	// 4. Bấm Checkout
+	logWorker(workerID, "-> [BƯỚC 4/8] Đang tìm và bấm nút 'Checkout'...\n")
 	err = clickCheckout(page)
 	if err != nil {
-		logWorker(workerID, "[!] Lỗi Checkout: %v\n", err)
+		logWorker(workerID, "[!] [BƯỚC 4/8] Cảnh báo khi bấm Checkout: %v\n", err)
+	} else {
+		logWorker(workerID, "-> [BƯỚC 4/8] Đã bấm Checkout! Đang chuyển hướng sang trang thanh toán...\n")
 	}
 
 	// 5. Điền thông tin giao hàng
+	logWorker(workerID, "-> [BƯỚC 5/8] Bắt đầu điền thông tin Checkout (Email, Họ tên, Địa chỉ, Số điện thoại)...\n")
 	err = fillCheckoutForm(page, profile)
 	if err != nil {
-		logWorker(workerID, "[!] Cảnh báo điền form: %v\n", err)
+		logWorker(workerID, "[!] [BƯỚC 5/8] Cảnh báo điền form: %v\n", err)
+	} else {
+		logWorker(workerID, "-> [BƯỚC 5/8] Đã điền xong toàn bộ thông tin giao hàng!\n")
 	}
 
 	// 6. Nhập mã giảm giá
 	if task.DiscountCode != "" {
+		logWorker(workerID, "-> [BƯỚC 6/8] Đang nhập và áp dụng mã giảm giá '%s'...\n", task.DiscountCode)
 		err = applyDiscountCode(page, task.DiscountCode)
 		if err != nil {
-			logWorker(workerID, "[!] Cảnh báo mã giảm giá '%s': %v\n", task.DiscountCode, err)
+			logWorker(workerID, "[!] [BƯỚC 6/8] Cảnh báo mã giảm giá '%s': %v\n", task.DiscountCode, err)
+		} else {
+			logWorker(workerID, "-> [BƯỚC 6/8] Áp dụng mã giảm giá '%s' hoàn tất!\n", task.DiscountCode)
 		}
 		time.Sleep(2 * time.Second)
+	} else {
+		logWorker(workerID, "-> [BƯỚC 6/8] Không dùng mã giảm giá, bỏ qua bước này.\n")
 	}
 
 	// 7. Điền thông tin thẻ tín dụng
+	logWorker(workerID, "-> [BƯỚC 7/8] Đang tìm khung thẻ bảo mật Shopify và điền thông tin thẻ tín dụng (%s)...\n", maskSecret("card", profile.CardNumber))
 	err = fillPaymentCardForm(page, profile)
 	if err != nil {
-		logWorker(workerID, "[!] Lỗi điền thẻ: %v\n", err)
+		logWorker(workerID, "[!] [BƯỚC 7/8] Lỗi điền thẻ: %v\n", err)
+	} else {
+		logWorker(workerID, "-> [BƯỚC 7/8] Đã điền xong đầy đủ thông tin thẻ tín dụng!\n")
 	}
 
 	// 8. Bấm Pay now và kiểm tra
+	logWorker(workerID, "-> [BƯỚC 8/8] Kiểm tra đơn hàng, địa chỉ và tiến hành bấm 'Pay now' (Thử tối đa 7 lần)...\n")
 	err = extractOrderSummaryAndPayNow(page, task)
 	if err != nil {
-		logWorker(workerID, "[!] Lỗi thanh toán: %v\n", err)
+		logWorker(workerID, "[!] [BƯỚC 8/8] Lỗi thanh toán: %v\n", err)
 		return err
 	}
 
@@ -1375,6 +1397,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		log.Println("[!] Cảnh báo: Hết thời gian chờ URL chuyển hướng, vẫn tiếp tục tìm form...")
 	}
 
+	log.Println("-> [BƯỚC 5] Đang đợi trang Checkout tải xong các ô nhập dữ liệu...")
 	time.Sleep(4 * time.Second)
 
 	emailInputSelectors := []string{
@@ -1406,6 +1429,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	}
 
 	if emailEl != nil {
+		log.Printf("-> Đang gõ Email: '%s' (Human Typing)...\n", profile.Email)
 		_ = humanType(page, emailEl, profile.Email)
 		time.Sleep(time.Duration(350+rand.Intn(200)) * time.Millisecond)
 	} else {
@@ -1440,6 +1464,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		`input[id*="first-name"]`,
 	})
 	if firstNameEl != nil {
+		log.Printf("-> Đang gõ First name: '%s' (Human Typing)...\n", profile.FirstName)
 		_ = humanType(page, firstNameEl, profile.FirstName)
 		time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 	}
@@ -1456,6 +1481,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		`input[id*="last-name"]`,
 	})
 	if lastNameEl != nil {
+		log.Printf("-> Đang gõ Last name: '%s' (Human Typing)...\n", profile.LastName)
 		_ = humanType(page, lastNameEl, profile.LastName)
 		time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 	}
@@ -1484,8 +1510,10 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		})
 
 		if addressEl != nil {
+			log.Printf("-> Đang gõ Address tìm kiếm: '%s' (Human Typing)...\n", addressToType)
 			_ = humanType(page, addressEl, addressToType)
 			time.Sleep(1 * time.Second)
+			log.Println("-> Đang chọn gợi ý địa chỉ đầu tiên từ danh sách...")
 			_ = selectFirstAddressSuggestion(page, addressEl, addressToType)
 
 			time.Sleep(1500 * time.Millisecond)
@@ -1525,11 +1553,13 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		})
 
 		if phoneEl != nil {
+			log.Printf("-> Đang gõ Phone: '%s' (Human Typing)...\n", profile.Phone)
 			_ = humanType(page, phoneEl, profile.Phone)
 			time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 		}
 	}
 
+	log.Println("-> [BƯỚC 5] ĐÃ HOÀN TẤT ĐIỀN EMAIL, HỌ TÊN, ĐỊA CHỈ & SỐ ĐIỆN THOẠI!")
 	return nil
 }
 
@@ -2588,6 +2618,8 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 		return true
 	}
 
+	log.Printf("-> Đang gõ %s: '%s' (Human Typing)...\n", fieldName, maskSecret(fieldName, value))
+
 	defer func() {
 		if r := recover(); r != nil {
 			success = false
@@ -3074,16 +3106,16 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 
 	time.Sleep(3 * time.Second)
 
-	maxRetries := 2
+	maxRetries := 6 // Thử tối đa 7 lần (1 lần đầu + 6 lần retry)
 	for attempt := 1; attempt <= 1+maxRetries; attempt++ {
 		if attempt > 1 {
 			log.Println("==================================================")
-			log.Printf("-> [RETRY %d/%d] CHỜ CỔNG THANH TOÁN ỔN ĐỊNH HOÀN TOÀN TRƯỚC KHI THỬ LẠI...\n", attempt-1, maxRetries)
+			log.Printf("-> [RETRY %d/%d (Lần %d/7)] CHỜ CỔNG THANH TOÁN ỔN ĐỊNH HOÀN TOÀN TRƯỚC KHI THỬ LẠI...\n", attempt-1, maxRetries, attempt)
 			log.Println("==================================================")
 			waitForPageIdle(page)
 			time.Sleep(2 * time.Second)
 
-			log.Printf("-> [RETRY %d/%d] Đang nhập lại toàn bộ thông tin thẻ tín dụng trước khi bấm Pay now...\n", attempt-1, maxRetries)
+			log.Printf("-> [RETRY %d/%d (Lần %d/7)] Đang nhập lại toàn bộ thông tin thẻ tín dụng trước khi bấm Pay now...\n", attempt-1, maxRetries, attempt)
 			_ = fillPaymentCardForm(page, profile)
 			time.Sleep(1500 * time.Millisecond)
 		}
@@ -3098,6 +3130,7 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 		randomWait := 2 + rand.Intn(3)
 		time.Sleep(time.Duration(randomWait) * time.Second)
 
+		log.Printf("-> Đang kiểm tra và bấm nút 'Pay now' (Lần %d/7)...\n", attempt)
 		clicked, btnName := clickPayNowButton(page)
 		if !clicked {
 			log.Println("-> Nút thanh toán không còn hiển thị. Đang kiểm tra xem đơn hàng đã chuyển trang Thank You thành công hay chưa...")
@@ -3122,7 +3155,7 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 			break
 		}
 
-		log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d)!\n", btnName, attempt)
+		log.Printf("-> ĐÃ BẤM THÀNH CÔNG NÚT '%s' (Lần %d/7)!\n", btnName, attempt)
 		log.Println("-> BẮT ĐẦU CHỜ API CỔNG THANH TOÁN GỌI XONG (nút hết 'Processing...' và ngưng spinner)...")
 
 		// CHỜ API THANH TOÁN GỌI XONG HOÀN TOÀN:
@@ -3150,12 +3183,12 @@ func extractOrderSummaryAndPayNow(page *rod.Page, task CheckoutTask) error {
 		log.Printf("-> API THANH TOÁN ĐÃ GỌI XONG VỚI KẾT QUẢ: %s\n", errMsg)
 
 		if attempt < 1+maxRetries {
-			log.Printf("-> [BƯỚC TIẾP THEO] Chờ 5 giây cho hệ thống ổn định hoàn toàn rồi mới thử lại lần %d...\n", attempt)
+			log.Printf("-> [BƯỚC TIẾP THEO] Chờ 5 giây cho hệ thống ổn định hoàn toàn rồi mới thử lại lần %d/7...\n", attempt+1)
 			waitForPageIdle(page)
 			time.Sleep(5 * time.Second)
 		} else {
-			log.Printf("[!] Cổng thanh toán kết luận thất bại sau %d lần thử: %s\n", 1+maxRetries, errMsg)
-			return fmt.Errorf("thanh toán không thành công: %s", errMsg)
+			log.Printf("[!] Cổng thanh toán kết luận thất bại sau 7 lần thử thẻ: %s\n", errMsg)
+			return fmt.Errorf("thanh toán không thành công sau 7 lần thử thẻ: %s", errMsg)
 		}
 	}
 
