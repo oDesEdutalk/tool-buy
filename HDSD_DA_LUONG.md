@@ -87,7 +87,7 @@ flowchart TD
 2. **Chọn Size**: Tự động mở dropdown chọn size theo tham số (`-size S/M/L/XL`).
 3. **Thêm giỏ hàng & Checkout**: Bấm `Add to bag` và đợi container giỏ hàng xuất hiện để bấm `Checkout`.
 4. **Điền thông tin Checkout**:
-   - Gõ Email, Họ tên với tốc độ mô phỏng người thật (Human typing delay 20–50ms/ký tự).
+   - Gõ Email, Họ tên, Địa chỉ với tốc độ người thật (Delay tự nhiên 45–95ms/ký tự, dừng ngắt quãng tự nhiên ở dấu chấm/ký tự đặc biệt 120–250ms, ngắt quãng cụm 4 số thẻ 200–380ms để chống bot detection).
    - Gõ địa chỉ, quét tọa độ dòng gợi ý (Suggestions dropdown) và click bằng chuột CDP.
    - Chờ API xác thực địa chỉ tự động cập nhật State/Zip và tải biểu phí vận chuyển.
    - Gõ số điện thoại.

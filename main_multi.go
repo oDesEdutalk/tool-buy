@@ -30,7 +30,7 @@ import (
 )
 
 // DefaultProxy mặc định
-const DefaultProxyMulti = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-68042532:41b761"
+const DefaultProxyMulti = ""
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -888,11 +888,12 @@ func appendResultFile(filename, content string) {
 }
 
 func main() {
-	targetURL := flag.String("url", "https://www.on.com/en-us/products/5-court-shorts-m-1mg1019/mens/black-apparel-1MG10190553", "URL trang web cần mở")
-	targetSize := flag.String("size", "S", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
+	targetURL := flag.String("url", "https://www.on.com/en-us/products/cloudboom-max-m-3mf3031/mens/lime-raspberry-shoes-3MF30314229", "URL trang web cần mở")
+	targetSize := flag.String("size", "9", "Size sản phẩm cần chọn (S, M, L, XL, ...)")
 	headlessFlag := flag.Bool("headless", true, "Chạy ẩn trình duyệt để tối ưu tài nguyên (true/false)")
 	threadsFlag := flag.Int("threads", 0, "Số luồng chạy đồng thời (1 - 50)")
 
+	addressFlag := flag.String("address", "820 Roxfield Ct, Buford GA 30518", "Địa chỉ gõ vào ô tìm kiếm (hoặc lấy từ -data)")
 	proxyFileFlag := flag.String("proxy-file", "proxies.txt", "File danh sách proxy SOCKS5")
 	cardFileFlag := flag.String("card-file", "cards.txt", "File danh sách thẻ và profile")
 	discountFileFlag := flag.String("discount-file", "discounts.txt", "File danh sách mã giảm giá")
@@ -905,7 +906,7 @@ func main() {
 	// Flag đơn lẻ fallback nếu người dùng muốn chạy 1 profile trực tiếp
 	dataSingle := flag.String("data", "", "Chuỗi dữ liệu đơn lẻ (nếu không dùng file)")
 	proxySingle := flag.String("proxy", "", "Proxy đơn lẻ")
-	discountSingle := flag.String("discount", "IDME_ON_20_JOLDOZ", "Mã giảm giá đơn lẻ")
+	discountSingle := flag.String("discount", "IDME_ON_20_ITULQV", "Mã giảm giá đơn lẻ")
 
 	flag.Parse()
 
@@ -1024,6 +1025,7 @@ func main() {
 		fmt.Printf(" -> Tổng số User-Agent  : %d (ngẫu nhiên từ %s)\n", len(userAgents), *uaFileFlag)
 	}
 	fmt.Printf(" -> Tổng số Mã giảm giá : %d\n", len(discounts))
+	fmt.Printf(" -> Địa chỉ nhận hàng   : %s\n", *addressFlag)
 	fmt.Printf(" -> URL Sản phẩm        : %s\n", *targetURL)
 	fmt.Printf(" -> Size sản phẩm       : %s\n", *targetSize)
 	fmt.Println("================================================================================")
@@ -1036,6 +1038,25 @@ func main() {
 		prof := parseDataString(cards[i])
 		if prof == nil {
 			continue
+		}
+
+		// Địa chỉ nhận hàng: Luôn ưu tiên dùng addressFlag mặc định, không lấy địa chỉ từ thẻ
+		if *addressFlag != "" {
+			prof.RawAddress = *addressFlag
+			prof.Address = *addressFlag
+			if idx := strings.Index(*addressFlag, ","); idx != -1 {
+				prof.Address = strings.TrimSpace((*addressFlag)[:idx])
+				rest := strings.TrimSpace((*addressFlag)[idx+1:])
+				fields := strings.Fields(rest)
+				if len(fields) >= 3 {
+					prof.ZipCode = fields[len(fields)-1]
+					prof.State = fields[len(fields)-2]
+					prof.City = strings.Join(fields[:len(fields)-2], " ")
+				} else if len(fields) == 2 {
+					prof.State = fields[0]
+					prof.ZipCode = fields[1]
+				}
+			}
 		}
 
 		if len(phones) > 0 {
@@ -1386,7 +1407,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 
 	if emailEl != nil {
 		_ = humanType(page, emailEl, profile.Email)
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(time.Duration(350+rand.Intn(200)) * time.Millisecond)
 	} else {
 		_, _ = page.Eval(`(val) => {
 			const inputs = Array.from(document.querySelectorAll('input'));
@@ -1420,7 +1441,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	})
 	if firstNameEl != nil {
 		_ = humanType(page, firstNameEl, profile.FirstName)
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 	}
 
 	lastNameEl := findInputField(page, []string{
@@ -1436,7 +1457,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	})
 	if lastNameEl != nil {
 		_ = humanType(page, lastNameEl, profile.LastName)
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 	}
 
 	addressToType := profile.RawAddress
@@ -1505,7 +1526,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 
 		if phoneEl != nil {
 			_ = humanType(page, phoneEl, profile.Phone)
-			time.Sleep(400 * time.Millisecond)
+			time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 		}
 	}
 
@@ -2075,23 +2096,52 @@ func findInputField(page *rod.Page, selectors []string) *rod.Element {
 	return nil
 }
 
-// humanType mô phỏng gõ phím con người an toàn
+// typeHumanLike gõ từng ký tự mô phỏng nhịp điệu người thật:
+// - Tốc độ gõ cơ bản: 45 - 95ms / ký tự
+// - Ngắt quãng dài hơn khi gặp dấu chấm (.), @, khoảng trắng, gạch ngang, v.v. (120 - 240ms)
+// - Ngắt quãng tự nhiên theo cụm 4 số thẻ ngân hàng (200 - 380ms)
+// - Ngắt quãng ngẫu nhiên (micro-pause / hesitation)
+func typeHumanLike(el *rod.Element, text string, isCardNumber bool) {
+	for idx, ch := range text {
+		_ = el.Input(string(ch))
+
+		// Độ trễ cơ bản giữa mỗi phím (tự nhiên 45 - 95ms)
+		baseDelay := 45 + rand.Intn(50)
+		time.Sleep(time.Duration(baseDelay) * time.Millisecond)
+
+		// Nếu là số thẻ ngân hàng: ngắt quãng tự nhiên sau mỗi cụm 4 số để kiểm tra/nhìn thẻ
+		if isCardNumber && (idx+1)%4 == 0 && idx < len(text)-1 {
+			pause := 200 + rand.Intn(180)
+			time.Sleep(time.Duration(pause) * time.Millisecond)
+			continue
+		}
+
+		// Ngắt quãng rõ rệt khi gõ dấu chấm (.), ký tự đặc biệt (@, -, /, ,, khoảng trắng)
+		if ch == '.' || ch == '@' || ch == ' ' || ch == '-' || ch == '/' || ch == ',' || ch == '_' {
+			pause := 120 + rand.Intn(130)
+			time.Sleep(time.Duration(pause) * time.Millisecond)
+		} else if rand.Float32() < 0.12 {
+			// Thỉnh thoảng ngắt quãng ngẫu nhiên (hesitation / micro-pause 100 - 220ms)
+			pause := 100 + rand.Intn(120)
+			time.Sleep(time.Duration(pause) * time.Millisecond)
+		}
+	}
+}
+
+// humanType mô phỏng gõ phím con người an toàn, tự nhiên và chống bot detection
 func humanType(page *rod.Page, el *rod.Element, text string) error {
 	if el == nil {
 		return fmt.Errorf("element is nil")
 	}
 
 	_ = el.ScrollIntoView()
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
 	_ = el.Click(proto.InputMouseButtonLeft, 1)
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(time.Duration(80+rand.Intn(50)) * time.Millisecond)
 	_ = el.SelectAllText()
+	time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
 
-	for _, ch := range text {
-		_ = el.Input(string(ch))
-		delay := 20 + rand.Intn(30)
-		time.Sleep(time.Duration(delay) * time.Millisecond)
-	}
+	typeHumanLike(el, text, false)
 
 	_, _ = el.Eval(`(el, expected) => {
 		if (el.value !== expected) {
@@ -2101,7 +2151,7 @@ func humanType(page *rod.Page, el *rod.Element, text string) error {
 		}
 	}`, text)
 
-	time.Sleep(80 * time.Millisecond)
+	time.Sleep(time.Duration(150+rand.Intn(100)) * time.Millisecond)
 	return nil
 }
 
@@ -2592,9 +2642,9 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 							year := cleanDigits[2:]
 
 							_ = inp.Input(string(month[0]))
-							time.Sleep(time.Duration(30+rand.Intn(20)) * time.Millisecond)
+							time.Sleep(time.Duration(55+rand.Intn(40)) * time.Millisecond)
 							_ = inp.Input(string(month[1]))
-							time.Sleep(150 * time.Millisecond)
+							time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 							valRes, _ := frame.Eval(`(sel) => {
 								try {
@@ -2610,13 +2660,15 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 
 							if !strings.Contains(currentVal, "/") {
 								_ = inp.Input("/")
-								time.Sleep(time.Duration(40+rand.Intn(20)) * time.Millisecond)
+								time.Sleep(time.Duration(70+rand.Intn(50)) * time.Millisecond)
+							} else {
+								time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
 							}
 
 							_ = inp.Input(string(year[0]))
-							time.Sleep(time.Duration(30+rand.Intn(20)) * time.Millisecond)
+							time.Sleep(time.Duration(55+rand.Intn(40)) * time.Millisecond)
 							_ = inp.Input(string(year[1]))
-							time.Sleep(100 * time.Millisecond)
+							time.Sleep(time.Duration(100+rand.Intn(60)) * time.Millisecond)
 
 							_, _ = frame.Eval(`(sel, mm, yy) => {
 								try {
@@ -2633,23 +2685,12 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 								} catch(e) {}
 							}`, selector, month, year)
 						} else {
-							for _, ch := range value {
-								_ = inp.Input(string(ch))
-								delay := 75 + rand.Intn(50)
-								time.Sleep(time.Duration(delay) * time.Millisecond)
-							}
+							typeHumanLike(inp, value, false)
 						}
 					} else {
 						isCardNumber := strings.Contains(strings.ToLower(fieldName), "số thẻ") || strings.Contains(selector, "number")
-						for idx, ch := range value {
-							_ = inp.Input(string(ch))
-							delay := 75 + rand.Intn(55) // Tốc độ gõ tự nhiên ~75-130ms/phím
-							time.Sleep(time.Duration(delay) * time.Millisecond)
-							if isCardNumber && (idx+1)%4 == 0 && idx < len(value)-1 {
-								time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
-							}
-						}
-						time.Sleep(150 * time.Millisecond)
+						typeHumanLike(inp, value, isCardNumber)
+						time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 						_, _ = frame.Eval(`(sel) => {
 							try {
@@ -2706,9 +2747,9 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 					year := cleanDigits[2:]
 
 					_ = inp.Input(string(month[0]))
-					time.Sleep(time.Duration(80+rand.Intn(40)) * time.Millisecond)
+					time.Sleep(time.Duration(55+rand.Intn(40)) * time.Millisecond)
 					_ = inp.Input(string(month[1]))
-					time.Sleep(250 * time.Millisecond)
+					time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 					valRes, _ := page.Eval(`(sel) => {
 						try {
@@ -2724,15 +2765,15 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 
 					if !strings.Contains(currentVal, "/") {
 						_ = inp.Input("/")
-						time.Sleep(time.Duration(80+rand.Intn(40)) * time.Millisecond)
+						time.Sleep(time.Duration(70+rand.Intn(50)) * time.Millisecond)
 					} else {
-						time.Sleep(time.Duration(200+rand.Intn(60)) * time.Millisecond)
+						time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
 					}
 
 					_ = inp.Input(string(year[0]))
-					time.Sleep(time.Duration(80+rand.Intn(40)) * time.Millisecond)
+					time.Sleep(time.Duration(55+rand.Intn(40)) * time.Millisecond)
 					_ = inp.Input(string(year[1]))
-					time.Sleep(200 * time.Millisecond)
+					time.Sleep(time.Duration(100+rand.Intn(60)) * time.Millisecond)
 
 					_, _ = page.Eval(`(sel, mm, yy) => {
 						try {
@@ -2749,23 +2790,12 @@ func fillFieldByExactSelector(page *rod.Page, fieldName string, selector string,
 						} catch(e) {}
 					}`, selector, month, year)
 				} else {
-					for _, ch := range value {
-						_ = inp.Input(string(ch))
-						delay := 75 + rand.Intn(50)
-						time.Sleep(time.Duration(delay) * time.Millisecond)
-					}
+					typeHumanLike(inp, value, false)
 				}
 			} else {
 				isCardNumber := strings.Contains(strings.ToLower(fieldName), "số thẻ") || strings.Contains(selector, "number")
-				for idx, ch := range value {
-					_ = inp.Input(string(ch))
-					delay := 75 + rand.Intn(55)
-					time.Sleep(time.Duration(delay) * time.Millisecond)
-					if isCardNumber && (idx+1)%4 == 0 && idx < len(value)-1 {
-						time.Sleep(time.Duration(200+rand.Intn(100)) * time.Millisecond)
-					}
-				}
-				time.Sleep(150 * time.Millisecond)
+				typeHumanLike(inp, value, isCardNumber)
+				time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 				_, _ = page.Eval(`(sel) => {
 					try {
@@ -2808,21 +2838,21 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	time.Sleep(time.Duration(800+rand.Intn(400)) * time.Millisecond)
 
 	_ = fillFieldByExactSelector(page, "Số thẻ", `input#number, input[name="number"]`, profile.CardNumber)
-	time.Sleep(time.Duration(900+rand.Intn(300)) * time.Millisecond)
+	time.Sleep(time.Duration(150+rand.Intn(80)) * time.Millisecond)
 
 	_ = fillFieldByExactSelector(page, "Hạn dùng", `input#expiry, input[name="expiry"]`, expCombined)
-	time.Sleep(time.Duration(800+rand.Intn(300)) * time.Millisecond)
+	time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 	_ = fillFieldByExactSelector(page, "CVV", `input#verification_value, input[name="verification_value"]`, profile.CVV)
-	time.Sleep(time.Duration(800+rand.Intn(300)) * time.Millisecond)
+	time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 
 	if profile.FullName != "" {
 		_ = fillFieldByExactSelector(page, "Tên trên thẻ", `input#name, input[name="name"], input[placeholder*="Name on card" i]`, profile.FullName)
-		time.Sleep(time.Duration(600+rand.Intn(200)) * time.Millisecond)
+		time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 	}
 
-	// Đợi 2s để Shopify iframe hoàn tất kiểm tra Luhn và hợp lệ hóa thẻ
-	time.Sleep(2000 * time.Millisecond)
+	// Đợi iframe Shopify hoàn tất kiểm tra Luhn và hợp lệ hóa thẻ
+	time.Sleep(600 * time.Millisecond)
 
 	return nil
 }
@@ -2890,12 +2920,8 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 			_, _ = reductionsInput.Eval(`() => { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); }`)
 			time.Sleep(80 * time.Millisecond)
 
-			for _, ch := range discountCode {
-				_ = reductionsInput.Input(string(ch))
-				delay := 20 + rand.Intn(25)
-				time.Sleep(time.Duration(delay) * time.Millisecond)
-			}
-			time.Sleep(200 * time.Millisecond)
+			typeHumanLike(reductionsInput, discountCode, false)
+			time.Sleep(time.Duration(150+rand.Intn(100)) * time.Millisecond)
 
 			_ = page.Keyboard.Press(input.Enter)
 			time.Sleep(300 * time.Millisecond)
