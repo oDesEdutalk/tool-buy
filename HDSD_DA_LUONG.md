@@ -82,6 +82,9 @@ flowchart TD
   - Ở các phiên làm việc tiếp theo (hoặc khi bật lại tool), proxy này sẽ tiếp tục được ưu tiên sử dụng để mua hàng.
 - **Xử Lý Khi Thiếu Proxy**: Nếu số lượng proxy trong `proxies.txt` ít hơn số thẻ/profile, hệ thống sẽ **chỉ sử dụng số proxy còn lại trong file** tương ứng với số tác vụ khả thi, đồng thời gửi cảnh báo đến Telegram.
 - **Cảnh Báo Telegram Tự Động**: Khi file `proxies.txt` hết proxy hoặc toàn bộ proxy đã bị lỗi không thể chạy tiếp, tool sẽ tự động gửi thông báo khẩn cấp đến tài khoản Telegram của bạn.
+- **Sản phẩm & Size Ngẫu Nhiên (`products.txt`)**:
+  - File `products.txt` chứa danh sách các link sản phẩm kèm size theo định dạng: `URL|Size` (Ví dụ: `https://www.on.com/...|S` hoặc `https://www.on.com/...|9`).
+  - Mỗi luồng/tác vụ sẽ bốc ngẫu nhiên 1 sản phẩm và size từ file này để mua. Nếu không có file hoặc file trống, tool sẽ fallback về cờ `-url` và `-size` truyền vào lệnh.
 - **Mã giảm giá**: `discounts[i % len(discounts)]`
 - **Thẻ & Profile**: Mỗi tác vụ lấy 1 dòng từ `cards.txt`.
 
