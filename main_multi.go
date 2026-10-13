@@ -1476,11 +1476,11 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 	waitInputTimeout := time.Now().Add(20 * time.Second)
 	for time.Now().Before(waitInputTimeout) {
 		for _, sel := range emailInputSelectors {
-			el, err := page.Element(sel)
-			if err == nil && el != nil {
-				visible, _ := el.Visible()
+			has, el, err := page.Has(sel)
+			if err == nil && has && el != nil {
+				visible, _ := el.Timeout(500 * time.Millisecond).Visible()
 				if visible {
-					emailEl = el
+					emailEl = el.CancelTimeout()
 					break
 				}
 			}
@@ -1488,14 +1488,16 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		if emailEl != nil {
 			break
 		}
-		time.Sleep(800 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	if emailEl != nil {
 		log.Printf("-> Đang gõ Email: '%s' (Human Typing)...\n", profile.Email)
 		_ = humanType(page, emailEl, profile.Email)
+		log.Println("-> Đã hoàn thành gõ Email.")
 		time.Sleep(time.Duration(350+rand.Intn(200)) * time.Millisecond)
 	} else {
+		log.Println("[!] Không tìm thấy ô Email qua selector thông thường, thử điền bằng JavaScript...")
 		_, _ = page.Eval(`(val) => {
 			const inputs = Array.from(document.querySelectorAll('input'));
 			for (const inp of inputs) {
@@ -1513,40 +1515,101 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 			}
 			return false;
 		}`, profile.Email)
+		log.Println("-> Đã thử điền Email qua JS fallback.")
 	}
 
-	firstNameEl := findInputField(page, []string{
+	firstNameSelectors := []string{
+		`input[name="shippingAddress.firstName"]`,
 		`input[name="firstName"]`,
 		`input[name="first_name"]`,
-		`input[name="shippingAddress.firstName"]`,
-		`input[placeholder*="First name"]`,
-		`input[placeholder*="First Name"]`,
 		`input[autocomplete="given-name"]`,
+		`input[placeholder*="First name" i]`,
+		`input[placeholder*="First Name" i]`,
 		`input#firstName`,
 		`input[id*="firstName"]`,
 		`input[id*="first-name"]`,
-	})
+	}
+	var firstNameEl *rod.Element
+	for retry := 0; retry < 6; retry++ {
+		firstNameEl = findInputField(page, firstNameSelectors)
+		if firstNameEl != nil {
+			break
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+
 	if firstNameEl != nil {
 		log.Printf("-> Đang gõ First name: '%s' (Human Typing)...\n", profile.FirstName)
 		_ = humanType(page, firstNameEl, profile.FirstName)
+		log.Println("-> Đã hoàn thành gõ First name.")
 		time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
+	} else {
+		log.Println("[!] Thử điền First name qua JavaScript fallback...")
+		_, _ = page.Eval(`(val) => {
+			const inputs = Array.from(document.querySelectorAll('input'));
+			for (const inp of inputs) {
+				const name = (inp.getAttribute('name') || '').toLowerCase();
+				const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+				const auto = (inp.getAttribute('autocomplete') || '').toLowerCase();
+				const id = (inp.getAttribute('id') || '').toLowerCase();
+				if (name.includes('firstname') || name.includes('first_name') || ph.includes('first name') || auto.includes('given-name') || id.includes('firstname') || id.includes('first-name')) {
+					inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					inp.focus();
+					inp.value = val;
+					inp.dispatchEvent(new Event('input', { bubbles: true }));
+					inp.dispatchEvent(new Event('change', { bubbles: true }));
+					return true;
+				}
+			}
+			return false;
+		}`, profile.FirstName)
 	}
 
-	lastNameEl := findInputField(page, []string{
+	lastNameSelectors := []string{
+		`input[name="shippingAddress.lastName"]`,
 		`input[name="lastName"]`,
 		`input[name="last_name"]`,
-		`input[name="shippingAddress.lastName"]`,
-		`input[placeholder*="Last name"]`,
-		`input[placeholder*="Last Name"]`,
 		`input[autocomplete="family-name"]`,
+		`input[placeholder*="Last name" i]`,
+		`input[placeholder*="Last Name" i]`,
 		`input#lastName`,
 		`input[id*="lastName"]`,
 		`input[id*="last-name"]`,
-	})
+	}
+	var lastNameEl *rod.Element
+	for retry := 0; retry < 5; retry++ {
+		lastNameEl = findInputField(page, lastNameSelectors)
+		if lastNameEl != nil {
+			break
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+
 	if lastNameEl != nil {
 		log.Printf("-> Đang gõ Last name: '%s' (Human Typing)...\n", profile.LastName)
 		_ = humanType(page, lastNameEl, profile.LastName)
+		log.Println("-> Đã hoàn thành gõ Last name.")
 		time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
+	} else {
+		log.Println("[!] Thử điền Last name qua JavaScript fallback...")
+		_, _ = page.Eval(`(val) => {
+			const inputs = Array.from(document.querySelectorAll('input'));
+			for (const inp of inputs) {
+				const name = (inp.getAttribute('name') || '').toLowerCase();
+				const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+				const auto = (inp.getAttribute('autocomplete') || '').toLowerCase();
+				const id = (inp.getAttribute('id') || '').toLowerCase();
+				if (name.includes('lastname') || name.includes('last_name') || ph.includes('last name') || auto.includes('family-name') || id.includes('lastname') || id.includes('last-name')) {
+					inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					inp.focus();
+					inp.value = val;
+					inp.dispatchEvent(new Event('input', { bubbles: true }));
+					inp.dispatchEvent(new Event('change', { bubbles: true }));
+					return true;
+				}
+			}
+			return false;
+		}`, profile.LastName)
 	}
 
 	addressToType := profile.RawAddress
@@ -1556,19 +1619,19 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 
 	if addressToType != "" {
 		addressEl := findInputField(page, []string{
+			`input[name="shippingAddress.address1"]`,
+			`input[name="address1"]`,
+			`input#shipping-address1`,
+			`input#address1`,
 			`input[placeholder*="enter an address"]`,
 			`input[placeholder*="house number"]`,
-			`input[name="address1"]`,
 			`input[name="address"]`,
 			`input[name="streetAddress"]`,
-			`input[name="shippingAddress.address1"]`,
 			`input[placeholder*="Address"]`,
 			`input[placeholder*="Street address"]`,
 			`input[placeholder*="Street"]`,
 			`input[autocomplete="address-line1"]`,
 			`input[autocomplete="shipping address-line1"]`,
-			`input#address1`,
-			`input#shipping-address1`,
 			`input[id*="address"]`,
 		})
 
@@ -1597,28 +1660,68 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 			time.Sleep(1 * time.Second)
 
 			waitForAddressAPIToComplete(page)
+		} else {
+			log.Println("[!] Không tìm thấy ô Address bằng selector thông thường, thử điền qua JS fallback...")
+			_, _ = page.Eval(`(val) => {
+				const inputs = Array.from(document.querySelectorAll('input'));
+				for (const inp of inputs) {
+					const name = (inp.getAttribute('name') || '').toLowerCase();
+					const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+					const id = (inp.getAttribute('id') || '').toLowerCase();
+					if (name.includes('address1') || name.includes('address') || ph.includes('address') || id.includes('address')) {
+						inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						inp.focus();
+						inp.value = val;
+						inp.dispatchEvent(new Event('input', { bubbles: true }));
+						inp.dispatchEvent(new Event('change', { bubbles: true }));
+						return true;
+					}
+				}
+				return false;
+			}`, addressToType)
 		}
 	}
 
 	if profile.Phone != "" {
 		phoneEl := findInputField(page, []string{
-			`input[type="tel"]`,
+			`input[name="shippingAddress.phone"]`,
 			`input[name="phone"]`,
+			`input[type="tel"]`,
+			`input#phone`,
 			`input[name="telephone"]`,
 			`input[name="phoneNumber"]`,
-			`input[name="shippingAddress.phone"]`,
 			`input[placeholder*="Phone"]`,
 			`input[placeholder*="Mobile"]`,
 			`input[autocomplete="tel"]`,
 			`input[autocomplete="shipping tel"]`,
-			`input#phone`,
 			`input[id*="phone"]`,
 		})
 
 		if phoneEl != nil {
 			log.Printf("-> Đang gõ Phone: '%s' (Human Typing)...\n", profile.Phone)
 			_ = humanType(page, phoneEl, profile.Phone)
+			log.Println("-> Đã hoàn thành gõ Phone.")
 			time.Sleep(time.Duration(250+rand.Intn(150)) * time.Millisecond)
+		} else {
+			log.Println("[!] Thử điền Phone qua JavaScript fallback...")
+			_, _ = page.Eval(`(val) => {
+				const inputs = Array.from(document.querySelectorAll('input'));
+				for (const inp of inputs) {
+					const type = (inp.getAttribute('type') || '').toLowerCase();
+					const name = (inp.getAttribute('name') || '').toLowerCase();
+					const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+					const id = (inp.getAttribute('id') || '').toLowerCase();
+					if (type === 'tel' || name.includes('phone') || ph.includes('phone') || id.includes('phone')) {
+						inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						inp.focus();
+						inp.value = val;
+						inp.dispatchEvent(new Event('input', { bubbles: true }));
+						inp.dispatchEvent(new Event('change', { bubbles: true }));
+						return true;
+					}
+				}
+				return false;
+			}`, profile.Phone)
 		}
 	}
 
@@ -2175,14 +2278,14 @@ func updateAddressField(page *rod.Page, newAddress string) {
 	_ = page.Keyboard.Press(input.Escape)
 }
 
-// findInputField tìm kiếm ô input theo danh sách selector
+// findInputField tìm kiếm ô input theo danh sách selector (dùng Has để không bao giờ bị treo)
 func findInputField(page *rod.Page, selectors []string) *rod.Element {
 	for _, sel := range selectors {
-		el, err := page.Element(sel)
-		if err == nil && el != nil {
-			visible, _ := el.Visible()
-			if visible {
-				return el
+		has, el, err := page.Has(sel)
+		if err == nil && has && el != nil {
+			visible, err := el.Timeout(500 * time.Millisecond).Visible()
+			if err == nil && visible {
+				return el.CancelTimeout()
 			}
 		}
 	}
@@ -2195,8 +2298,17 @@ func findInputField(page *rod.Page, selectors []string) *rod.Element {
 // - Ngắt quãng tự nhiên theo cụm 4 số thẻ ngân hàng (200 - 380ms)
 // - Ngắt quãng ngẫu nhiên (micro-pause / hesitation)
 func typeHumanLike(el *rod.Element, text string, isCardNumber bool) {
+	if el == nil {
+		return
+	}
+	page := el.Page()
 	for idx, ch := range text {
-		_ = el.Input(string(ch))
+		charStr := string(ch)
+		// Dùng timeout 400ms để không bao giờ bị treo
+		err := el.Timeout(400 * time.Millisecond).Input(charStr)
+		if err != nil && page != nil {
+			_ = page.Timeout(300 * time.Millisecond).InsertText(charStr)
+		}
 
 		// Độ trễ cơ bản giữa mỗi phím (tự nhiên 45 - 95ms)
 		baseDelay := 45 + rand.Intn(50)
@@ -2227,24 +2339,28 @@ func humanType(page *rod.Page, el *rod.Element, text string) error {
 		return fmt.Errorf("element is nil")
 	}
 
-	_ = el.ScrollIntoView()
-	time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
-	_ = el.Click(proto.InputMouseButtonLeft, 1)
-	time.Sleep(time.Duration(80+rand.Intn(50)) * time.Millisecond)
-	_ = el.SelectAllText()
-	time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
+	// Đảm bảo element có timeout an toàn 8 giây, không bao giờ bị treo
+	safeEl := el.Timeout(8 * time.Second)
 
-	typeHumanLike(el, text, false)
+	_ = safeEl.ScrollIntoView()
+	time.Sleep(time.Duration(50+rand.Intn(40)) * time.Millisecond)
+	_ = safeEl.Focus()
+	_ = safeEl.Click(proto.InputMouseButtonLeft, 1)
+	time.Sleep(time.Duration(60+rand.Intn(40)) * time.Millisecond)
+	_ = safeEl.SelectAllText()
+	time.Sleep(time.Duration(30+rand.Intn(30)) * time.Millisecond)
 
-	_, _ = el.Eval(`(el, expected) => {
+	typeHumanLike(safeEl, text, false)
+
+	_, _ = safeEl.Timeout(2 * time.Second).Eval(`(el, expected) => {
 		if (el.value !== expected) {
 			el.value = expected;
-			el.dispatchEvent(new Event('input', { bubbles: true }));
-			el.dispatchEvent(new Event('change', { bubbles: true }));
 		}
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+		el.dispatchEvent(new Event('change', { bubbles: true }));
 	}`, text)
 
-	time.Sleep(time.Duration(150+rand.Intn(100)) * time.Millisecond)
+	time.Sleep(time.Duration(120+rand.Intn(80)) * time.Millisecond)
 	return nil
 }
 
@@ -2991,11 +3107,11 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 		}
 
 		for _, sel := range selectors {
-			el, err := page.Element(sel)
-			if err == nil && el != nil {
-				vis, _ := el.Visible()
+			has, el, err := page.Has(sel)
+			if err == nil && has && el != nil {
+				vis, _ := el.Timeout(500 * time.Millisecond).Visible()
 				if vis {
-					reductionsInput = el
+					reductionsInput = el.CancelTimeout()
 					break
 				}
 			}
@@ -3146,13 +3262,13 @@ func clickPayNowButton(page *rod.Page) (bool, string) {
 		return true, btnName
 	}
 
-	payBtn, err := page.Element(`button#checkout-pay-button, button[id*="pay-button"], button[type="submit"]`)
-	if err == nil && payBtn != nil {
-		vis, _ := payBtn.Visible()
+	hasPay, payBtn, err := page.Has(`button#checkout-pay-button, button[id*="pay-button"], button[type="submit"]`)
+	if err == nil && hasPay && payBtn != nil {
+		vis, _ := payBtn.Timeout(500 * time.Millisecond).Visible()
 		if vis {
-			_ = payBtn.ScrollIntoView()
+			_ = payBtn.Timeout(2 * time.Second).ScrollIntoView()
 			time.Sleep(100 * time.Millisecond)
-			_ = payBtn.Click(proto.InputMouseButtonLeft, 1)
+			_ = payBtn.Timeout(2 * time.Second).Click(proto.InputMouseButtonLeft, 1)
 			return true, "Pay now"
 		}
 	}
