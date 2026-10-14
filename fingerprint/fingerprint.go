@@ -391,6 +391,27 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 			Date.prototype.getTimezoneOffset = function() {
 				return targetOffset;
 			};
+
+			// Đảm bảo toàn bộ các API Intl khác đều trả về locale en-US (không bao giờ lộ vi-VN)
+			['NumberFormat', 'Collator', 'PluralRules', 'RelativeTimeFormat', 'Segmenter'].forEach(api => {
+				if (window.Intl && window.Intl[api] && window.Intl[api].prototype) {
+					const orig = window.Intl[api].prototype.resolvedOptions;
+					window.Intl[api].prototype.resolvedOptions = function() {
+						const opts = orig ? orig.apply(this, arguments) : {};
+						opts.locale = 'en-US';
+						return opts;
+					};
+				}
+			});
+
+			// Lọc bỏ toàn bộ giọng đọc tiếng Việt của hệ điều hành Windows trong SpeechSynthesis
+			if (window.speechSynthesis) {
+				const origGetVoices = window.speechSynthesis.getVoices.bind(window.speechSynthesis);
+				window.speechSynthesis.getVoices = function() {
+					const voices = origGetVoices();
+					return voices.filter(v => !v.lang.toLowerCase().includes('vi') && !v.name.toLowerCase().includes('vietnam'));
+				};
+			}
 		} catch(e) {}
 
 		// 3. Giả lập navigator.geolocation (Toạ độ GPS)
@@ -647,15 +668,16 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 						if (emittedFake) return;
 						emittedFake = true;
 
-						// 1. Host Candidate (Local IP Address an toàn)
-						const hostStr = 'candidate:111111111 1 udp 2113937151 10.0.0.2 54320 typ host generation 0';
-						const hostCand = makeCandidate(hostStr, '10.0.0.2', 'host', 54320);
+						// 1. Host Candidate dùng mDNS để Local IP Address hiển thị n/a chuẩn Chrome
+						const mDnsHost = (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'f47ac10b-58cc-4372-a567-0e02b2c3d479') + '.local';
+						const hostStr = 'candidate:111111111 1 udp 2113937151 ' + mDnsHost + ' 54320 typ host generation 0';
+						const hostCand = makeCandidate(hostStr, mDnsHost, 'host', 54320);
 						const evHost = new Event('icecandidate');
 						Object.defineProperty(evHost, 'candidate', { value: hostCand, enumerable: true });
 						dispatchToHandlers(evHost);
 
 						// 2. Server Reflexive Candidate (Public IP Address khớp 100% với IP Proxy)
-						const srflxStr = 'candidate:222222222 1 udp 1686052607 ' + targetProxyIP + ' 54321 typ srflx raddr 10.0.0.2 rport 54320 generation 0';
+						const srflxStr = 'candidate:222222222 1 udp 1686052607 ' + targetProxyIP + ' 54321 typ srflx raddr 0.0.0.0 rport 0 generation 0';
 						const srflxCand = makeCandidate(srflxStr, targetProxyIP, 'srflx', 54321);
 						const evSrflx = new Event('icecandidate');
 						Object.defineProperty(evSrflx, 'candidate', { value: srflxCand, enumerable: true });
