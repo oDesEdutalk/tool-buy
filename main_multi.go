@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -1301,9 +1302,14 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		Devtools(false).
 		Set("user-agent", fpProfile.UserAgent).
 		Set("disable-blink-features", "AutomationControlled").
-		Set("force-webrtc-ip-handling-policy", "default_public_interface_only").
 		Set("lang", "en-US").
-		Set("accept-lang", "en-US,en;q=0.9")
+		Set("accept-lang", "en-US,en;q=0.9").
+		// 1. Chống rò rỉ WebRTC (Ép WebRTC chỉ dùng Proxy, chặn UDP rò rỉ IP thật)
+		Set("force-webrtc-ip-handling-policy", "disable_non_proxied_udp").
+		Set("enforce-webrtc-ip-permission-check", "").
+		// 2. Chống rò rỉ IPv6 (Vô hiệu hoá IPv6 socket pool & chặn UDP QUIC bypass Proxy)
+		Set("disable-ipv6", "").
+		Set("disable-quic", "")
 
 	if userDataDir != "" {
 		l = l.UserDataDir(userDataDir)
@@ -1319,22 +1325,38 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		}
 
 		upstreamAddr := fmt.Sprintf("%s:%s", host, port)
-		if user != "" && pass != "" {
-			localProxyAddr, cBridge, err := startLocalSocks5Bridge(upstreamAddr, user, pass)
-			if err != nil {
-				logWorker(workerID, "[!] Không thể khởi tạo Local Proxy Bridge: %v\n", err)
-				recordFailedProxy(task.Proxy, fmt.Sprintf("Local Proxy Bridge error: %v", err))
-				return err
+		localProxyAddr, exitIP, geoInfo, cBridge, err := startLocalSocks5Bridge(upstreamAddr, user, pass)
+		if err != nil {
+			logWorker(workerID, "[!] Cảnh báo mở Local Proxy Bridge (%v), fallback sang cấu hình direct\n", err)
+			if user != "" && pass != "" {
+				l = l.Proxy(fmt.Sprintf("socks5://%s:%s@%s:%s", user, pass, host, port))
+			} else {
+				l = l.Proxy(fmt.Sprintf("socks5://%s:%s", host, port))
 			}
+		} else {
 			closeBridge = cBridge
 			defer func() {
 				if closeBridge != nil {
 					closeBridge()
 				}
 			}()
-			l = l.Proxy("socks5://" + localProxyAddr)
-		} else {
-			l = l.Proxy(fmt.Sprintf("socks5://%s:%s", host, port))
+
+			// Đồng bộ Exit IP và vị trí địa lý GPS / Múi giờ với Proxy thực tế
+			if exitIP != "" {
+				fpProfile.ProxyIP = exitIP
+				logWorker(workerID, "[+] Đã phát hiện Proxy Exit IP: %s (Đồng bộ WebRTC/DNS/IPv6 sang IP này)\n", exitIP)
+			} else if net.ParseIP(host) != nil {
+				fpProfile.ProxyIP = host
+			}
+			if geoInfo != nil {
+				fpProfile.Geo = *geoInfo
+			}
+
+			// 3. Chống rò rỉ DNS Leak: Ép Chrome uỷ quyền toàn bộ DNS cho Proxy, cấm phân giải DNS cục bộ
+			l = l.Proxy("socks5://" + localProxyAddr).
+				Set("host-resolver-rules", "MAP * ~NOTFOUND , EXCLUDE 127.0.0.1").
+				Set("disable-async-dns", "").
+				Set("disable-features", "DnsOverHttps,AsyncDns")
 		}
 	}
 
@@ -1359,6 +1381,16 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 	if err := fpProfile.ApplyToPage(page); err != nil {
 		logWorker(workerID, "[!] Cảnh báo: Lỗi áp dụng vân tay: %v\n", err)
 	}
+
+	// Tự động tiêm vân tay & WebRTC spoofing cho MỌI tab mới (khi người dùng mở tab kiểm tra browserleaks/whoer)
+	go browser.EachEvent(func(e *proto.TargetTargetCreated) {
+		if e.TargetInfo.Type == proto.TargetTargetInfoTypePage {
+			newPage, err := browser.PageFromTarget(e.TargetInfo.TargetID)
+			if err == nil && newPage != nil {
+				_ = fpProfile.ApplyToPage(newPage)
+			}
+		}
+	})()
 
 	page.MustSetWindow(0, 0, winW, winH)
 	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
@@ -1501,7 +1533,7 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 			if err == nil && has && el != nil {
 				visible, _ := el.Timeout(500 * time.Millisecond).Visible()
 				if visible {
-					emailEl = el.CancelTimeout()
+					emailEl = el
 					break
 				}
 			}
@@ -2306,7 +2338,7 @@ func findInputField(page *rod.Page, selectors []string) *rod.Element {
 		if err == nil && has && el != nil {
 			visible, err := el.Timeout(500 * time.Millisecond).Visible()
 			if err == nil && visible {
-				return el.CancelTimeout()
+				return el
 			}
 		}
 	}
@@ -2603,8 +2635,8 @@ func parseProxyDetails(raw string) (host, port, user, pass string, err error) {
 	return h, p, username, password, nil
 }
 
-// startLocalSocks5Bridge tạo một SOCKS5 listener cục bộ và trả về hàm đóng listener
-func startLocalSocks5Bridge(upstreamAddr, user, pass string) (string, func(), error) {
+// startLocalSocks5Bridge tạo một SOCKS5 listener cục bộ, tự động lấy exit IP & vị trí của Proxy, trả về localAddr, exitIP, geoInfo, closeFn, err
+func startLocalSocks5Bridge(upstreamAddr, user, pass string) (string, string, *fingerprint.GeoLocationInfo, func(), error) {
 	var auth *proxy.Auth
 	if user != "" {
 		auth = &proxy.Auth{
@@ -2615,12 +2647,66 @@ func startLocalSocks5Bridge(upstreamAddr, user, pass string) (string, func(), er
 
 	dialer, err := proxy.SOCKS5("tcp", upstreamAddr, auth, proxy.Direct)
 	if err != nil {
-		return "", nil, fmt.Errorf("không thể tạo dialer SOCKS5 upstream: %w", err)
+		return "", "", nil, nil, fmt.Errorf("không thể tạo dialer SOCKS5 upstream: %w", err)
+	}
+
+	// Lấy exit IP thực tế và toạ độ địa lý của Proxy (timeout 3s để không làm trễ quá trình)
+	var exitIP string
+	var geoInfo *fingerprint.GeoLocationInfo
+
+	type ipAPIResp struct {
+		Status      string  `json:"status"`
+		CountryCode string  `json:"countryCode"`
+		RegionName  string  `json:"regionName"`
+		City        string  `json:"city"`
+		Zip         string  `json:"zip"`
+		Lat         float64 `json:"lat"`
+		Lon         float64 `json:"lon"`
+		Timezone    string  `json:"timezone"`
+		Offset      int     `json:"offset"`
+		Query       string  `json:"query"`
+	}
+
+	checkClient := &http.Client{
+		Transport: &http.Transport{Dial: dialer.Dial},
+		Timeout:   3 * time.Second,
+	}
+
+	resp, err := checkClient.Get("http://ip-api.com/json/?fields=status,countryCode,regionName,city,zip,lat,lon,timezone,offset,query")
+	if err == nil {
+		var info ipAPIResp
+		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && info.Status == "success" && info.Query != "" {
+			exitIP = info.Query
+			tzOffset := -info.Offset / 60
+			if tzOffset < 0 {
+				tzOffset = 0
+			}
+			geoInfo = &fingerprint.GeoLocationInfo{
+				Country:        info.CountryCode,
+				State:          info.RegionName,
+				City:           info.City,
+				ZipCode:        info.Zip,
+				Timezone:       info.Timezone,
+				TimezoneOffset: tzOffset,
+				Latitude:       info.Lat,
+				Longitude:      info.Lon,
+			}
+		}
+		resp.Body.Close()
+	}
+
+	if exitIP == "" {
+		if resp2, err2 := checkClient.Get("https://api.ipify.org"); err2 == nil {
+			if b, err := io.ReadAll(resp2.Body); err == nil && len(b) > 0 {
+				exitIP = strings.TrimSpace(string(b))
+			}
+			resp2.Body.Close()
+		}
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return "", nil, fmt.Errorf("không thể mở local listener: %w", err)
+		return "", "", nil, nil, fmt.Errorf("không thể mở local listener: %w", err)
 	}
 
 	localAddr := listener.Addr().String()
@@ -2650,7 +2736,7 @@ func startLocalSocks5Bridge(upstreamAddr, user, pass string) (string, func(), er
 		_ = listener.Close()
 	}
 
-	return localAddr, closeFn, nil
+	return localAddr, exitIP, geoInfo, closeFn, nil
 }
 
 // handleLocalSocksConn xử lý handshake SOCKS5 phía local
@@ -3132,7 +3218,7 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 			if err == nil && has && el != nil {
 				vis, _ := el.Timeout(500 * time.Millisecond).Visible()
 				if vis {
-					reductionsInput = el.CancelTimeout()
+					reductionsInput = el
 					break
 				}
 			}

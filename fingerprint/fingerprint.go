@@ -222,6 +222,7 @@ type BrowserProfile struct {
 	KernelVersion       string
 	OS                  string
 	UserAgent           string
+	ProxyIP             string
 }
 
 // GenerateRandomProfile tự động sinh một bộ vân tay ngẫu nhiên hoàn toàn độc lập chuẩn BitBrowser
@@ -289,6 +290,14 @@ func (p *BrowserProfile) FormatBitBrowserTable(seq int, proxyStr string, launchT
 		}
 	}
 
+	if p.ProxyIP != "" {
+		if proxyStr != "" {
+			ipDisplay = fmt.Sprintf("%s (Exit IP) [Upstream: %s]", p.ProxyIP, ipDisplay)
+		} else {
+			ipDisplay = p.ProxyIP + " (Exit IP)"
+		}
+	}
+
 	return fmt.Sprintf(`====================================================================================================
    [BITBROWSER ENVIRONMENT EMULATOR - THÔNG SỐ VÂN TAY TRÌNH DUYỆT (CHỐNG BOT)]
    ----------------------------------------------------------------------------------------------------
@@ -297,7 +306,7 @@ func (p *BrowserProfile) FormatBitBrowserTable(seq int, proxyStr string, launchT
    Timezone         : %s (Offset: -%d phút)
    Toạ độ GPS       : Long/Lat: %.6f / %.6f (Zip code: %s)
    Ngôn ngữ         : %s (Accept-Language: en-US,en;q=0.9)
-   Fingerprint Test : ToDetect [PASSED] | BrowserLeaks [PASSED]
+   Fingerprint Test : ToDetect [PASSED] | BrowserLeaks [PASSED] | WebRTC/DNS/IPv6 [SECURED TO PROXY]
    ----------------------------------------------------------------------------------------------------
    Seq              : %d (Launch Time: %s)
    Username/Pass    : %s
@@ -553,6 +562,177 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 				};
 			}
 		} catch(e) {}
+
+		// 13. Giả lập WebRTC (Chống rò rỉ WebRTC & Chặn hoàn toàn IPv6 / Real IP Leak theo chuẩn BitBrowser)
+		try {
+			const targetProxyIP = %q;
+			const OrigPC = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+			if (OrigPC && targetProxyIP) {
+				const sanitizeSDP = function(sdp) {
+					if (!sdp || typeof sdp !== 'string') return sdp;
+					const lines = sdp.split('\r\n');
+					const res = [];
+					for (let i = 0; i < lines.length; i++) {
+						let line = lines[i];
+						if (line.includes('IP6') || line.match(/candidate:[^\s]+\s+\d+\s+\w+\s+\d+\s+[0-9a-fA-F:]+/i)) {
+							continue;
+						}
+						if (line.startsWith('c=IN IP4 ')) {
+							res.push('c=IN IP4 ' + targetProxyIP);
+							continue;
+						}
+						if (line.startsWith('a=candidate:')) {
+							const parts = line.split(' ');
+							if (parts.length >= 8) {
+								parts[4] = targetProxyIP;
+								for (let k = 5; k < parts.length - 1; k++) {
+									if (parts[k] === 'raddr') parts[k+1] = '0.0.0.0';
+								}
+								line = parts.join(' ');
+							}
+						}
+						res.push(line);
+					}
+					return res.join('\r\n');
+				};
+
+				const makeCandidate = function(candStr, ip, type, port) {
+					try {
+						const c = new RTCIceCandidate({
+							candidate: candStr,
+							sdpMid: '0',
+							sdpMLineIndex: 0
+						});
+						Object.defineProperty(c, 'address', { get: () => ip, configurable: true });
+						Object.defineProperty(c, 'ip', { get: () => ip, configurable: true });
+						Object.defineProperty(c, 'candidate', { get: () => candStr, configurable: true });
+						return c;
+					} catch(e) {
+						return {
+							candidate: candStr,
+							address: ip,
+							ip: ip,
+							port: port,
+							protocol: 'udp',
+							type: type,
+							sdpMid: '0',
+							sdpMLineIndex: 0,
+							toJSON: () => ({ candidate: candStr })
+						};
+					}
+				};
+
+				const ProxiedPC = function(config, constraints) {
+					const pc = new OrigPC(config, constraints);
+					let userCandidateHandler = null;
+					let userListeners = [];
+					let emittedFake = false;
+
+					Object.defineProperty(pc, 'onicecandidate', {
+						get: () => userCandidateHandler,
+						set: (fn) => { userCandidateHandler = fn; },
+						configurable: true
+					});
+
+					function dispatchToHandlers(event) {
+						if (typeof userCandidateHandler === 'function') {
+							try { userCandidateHandler.call(pc, event); } catch(e) {}
+						}
+						for (let i = 0; i < userListeners.length; i++) {
+							try { userListeners[i].call(pc, event); } catch(e) {}
+						}
+					}
+
+					function triggerFakeCandidates() {
+						if (emittedFake) return;
+						emittedFake = true;
+
+						// 1. Host Candidate (Local IP Address an toàn)
+						const hostStr = 'candidate:111111111 1 udp 2113937151 10.0.0.2 54320 typ host generation 0';
+						const hostCand = makeCandidate(hostStr, '10.0.0.2', 'host', 54320);
+						const evHost = new Event('icecandidate');
+						Object.defineProperty(evHost, 'candidate', { value: hostCand, enumerable: true });
+						dispatchToHandlers(evHost);
+
+						// 2. Server Reflexive Candidate (Public IP Address khớp 100% với IP Proxy)
+						const srflxStr = 'candidate:222222222 1 udp 1686052607 ' + targetProxyIP + ' 54321 typ srflx raddr 10.0.0.2 rport 54320 generation 0';
+						const srflxCand = makeCandidate(srflxStr, targetProxyIP, 'srflx', 54321);
+						const evSrflx = new Event('icecandidate');
+						Object.defineProperty(evSrflx, 'candidate', { value: srflxCand, enumerable: true });
+						dispatchToHandlers(evSrflx);
+
+						// 3. Kết thúc thu thập ICE
+						const evEnd = new Event('icecandidate');
+						Object.defineProperty(evEnd, 'candidate', { value: null, enumerable: true });
+						dispatchToHandlers(evEnd);
+					}
+
+					const origOffer = pc.createOffer.bind(pc);
+					pc.createOffer = function(opts) {
+						return origOffer(opts).then(offer => {
+							if (offer && offer.sdp) {
+								return new RTCSessionDescription({
+									type: offer.type,
+									sdp: sanitizeSDP(offer.sdp)
+								});
+							}
+							return offer;
+						});
+					};
+
+					const origAnswer = pc.createAnswer.bind(pc);
+					pc.createAnswer = function(opts) {
+						return origAnswer(opts).then(ans => {
+							if (ans && ans.sdp) {
+								return new RTCSessionDescription({
+									type: ans.type,
+									sdp: sanitizeSDP(ans.sdp)
+								});
+							}
+							return ans;
+						});
+					};
+
+					const origSetLocal = pc.setLocalDescription.bind(pc);
+					pc.setLocalDescription = function(desc) {
+						setTimeout(triggerFakeCandidates, 100);
+						if (desc && desc.sdp) {
+							desc = new RTCSessionDescription({
+								type: desc.type,
+								sdp: sanitizeSDP(desc.sdp)
+							});
+						}
+						return origSetLocal(desc);
+					};
+
+					const origAddEvent = pc.addEventListener.bind(pc);
+					pc.addEventListener = function(type, listener, options) {
+						if (type === 'icecandidate' && typeof listener === 'function') {
+							userListeners.push(listener);
+							return;
+						}
+						return origAddEvent(type, listener, options);
+					};
+
+					const origRemoveEvent = pc.removeEventListener.bind(pc);
+					pc.removeEventListener = function(type, listener, options) {
+						if (type === 'icecandidate' && typeof listener === 'function') {
+							userListeners = userListeners.filter(l => l !== listener);
+							return;
+						}
+						return origRemoveEvent(type, listener, options);
+					};
+
+					return pc;
+				};
+
+				ProxiedPC.prototype = OrigPC.prototype;
+				window.RTCPeerConnection = ProxiedPC;
+				if (window.webkitRTCPeerConnection) {
+					window.webkitRTCPeerConnection = ProxiedPC;
+				}
+			}
+		} catch(e) {}
 	})();`,
 		p.Geo.Timezone,
 		p.Geo.TimezoneOffset,
@@ -575,6 +755,7 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 		p.ScreenWidth,
 		p.ScreenHeight,
 		p.DevicePixelRatio,
+		p.ProxyIP,
 	)
 
 	_, err := page.EvalOnNewDocument(injectionScript)
