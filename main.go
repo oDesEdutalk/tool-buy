@@ -56,6 +56,7 @@ type CheckoutTask struct {
 	Proxy        string
 	Profile      *UserProfile
 	DiscountCode string
+	DiscountFile string
 	Headless     bool
 	UserAgent    string
 	TeleCfg      TelegramConfig
@@ -325,6 +326,69 @@ func saveSuccessOrderToFile(task CheckoutTask, tyDetails ThankYouDetails, filePa
 		sendTelegramAlert(task.TeleCfg, teleMsg)
 	}
 
+	// 5. Xóa mã giảm giá đã dùng thành công khỏi file discounts.txt nếu có
+	if task.DiscountCode != "" {
+		discFile := task.DiscountFile
+		if discFile == "" {
+			discFile = "discounts.txt"
+		}
+		_ = removeDiscountFromFile(discFile, task.DiscountCode)
+	}
+
+	return nil
+}
+
+var discountFileMutex sync.Mutex
+
+// removeDiscountFromFile xóa mã giảm giá đã sử dụng thành công khỏi file discounts.txt
+func removeDiscountFromFile(filePath, codeToRemove string) error {
+	discountFileMutex.Lock()
+	defer discountFileMutex.Unlock()
+
+	codeToRemove = strings.TrimSpace(codeToRemove)
+	if codeToRemove == "" || filePath == "" {
+		return nil
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	rawStr := strings.ReplaceAll(string(content), "\r\n", "\n")
+	lines := strings.Split(rawStr, "\n")
+	var newLines []string
+	removed := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			newLines = append(newLines, line)
+			continue
+		}
+		if trimmed == "" {
+			newLines = append(newLines, "")
+			continue
+		}
+
+		if !removed && strings.EqualFold(trimmed, codeToRemove) {
+			removed = true
+			log.Printf("-> [DISCOUNT] Đã xóa mã giảm giá thành công '%s' khỏi file '%s'\n", codeToRemove, filePath)
+			continue
+		}
+		newLines = append(newLines, trimmed)
+	}
+
+	if removed {
+		for len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) == "" {
+			newLines = newLines[:len(newLines)-1]
+		}
+		output := strings.Join(newLines, "\r\n") + "\r\n"
+		return os.WriteFile(filePath, []byte(output), 0644)
+	}
 	return nil
 }
 
@@ -428,6 +492,20 @@ func getRandomPhone(filePath string) string {
 		return ""
 	}
 	return lines[rand.Intn(len(lines))]
+}
+
+// randomizeEmail thêm một số ngẫu nhiên từ 1 đến 9999 vào trước ký tự @ của email
+func randomizeEmail(email string) string {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return fmt.Sprintf("user%d@gmail.com", rand.Intn(9999)+1)
+	}
+	randNum := rand.Intn(9999) + 1
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) == 2 {
+		return fmt.Sprintf("%s%d@%s", parts[0], randNum, parts[1])
+	}
+	return fmt.Sprintf("%s%d", email, randNum)
 }
 
 // defaultUserAgents danh sách User-Agent hiện đại dự phòng chuẩn BitBrowser Windows
@@ -1047,6 +1125,7 @@ func main() {
 	monthFlag := flag.String("month", "", "Tháng hết hạn MM")
 	yearFlag := flag.String("year", "", "Năm hết hạn YY")
 	cvvFlag := flag.String("cvv", "", "Mã bảo mật CVV")
+	discountFileFlag := flag.String("discount-file", "discounts.txt", "File danh sách mã giảm giá (mỗi dòng 1 mã)")
 	discountFlag := flag.String("discount", "IDME_ON_20_ITULQV", "Mã giảm giá (Discount code)")
 
 	flag.Parse()
@@ -1080,26 +1159,32 @@ func main() {
 	if *lastNameFlag != "" {
 		profile.LastName = *lastNameFlag
 	}
-	addressExplicit := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "address" {
-			addressExplicit = true
-		}
-	})
-	if (addressExplicit || profile.RawAddress == "") && *addressFlag != "" {
+	// Địa chỉ nhận hàng: Luôn ưu tiên dùng addressFlag mặc định, không lấy địa chỉ từ file thẻ
+	if *addressFlag != "" {
 		profile.RawAddress = *addressFlag
 		profile.Address = *addressFlag
-		if idx := strings.Index(*addressFlag, ","); idx != -1 {
-			profile.Address = strings.TrimSpace((*addressFlag)[:idx])
-			rest := strings.TrimSpace((*addressFlag)[idx+1:])
-			fields := strings.Fields(rest)
-			if len(fields) >= 3 {
-				profile.ZipCode = fields[len(fields)-1]
-				profile.State = fields[len(fields)-2]
-				profile.City = strings.Join(fields[:len(fields)-2], " ")
-			} else if len(fields) == 2 {
-				profile.State = fields[0]
-				profile.ZipCode = fields[1]
+		parts := strings.Split(*addressFlag, ",")
+		if len(parts) >= 3 {
+			profile.Address = strings.TrimSpace(parts[0])
+			profile.City = strings.TrimSpace(parts[1])
+			lastFields := strings.Fields(strings.TrimSpace(parts[2]))
+			if len(lastFields) >= 2 {
+				profile.State = lastFields[0]
+				profile.ZipCode = lastFields[len(lastFields)-1]
+			} else if len(parts) >= 4 {
+				profile.State = strings.TrimSpace(parts[2])
+				profile.ZipCode = strings.TrimSpace(parts[3])
+			}
+		} else if len(parts) == 2 {
+			profile.Address = strings.TrimSpace(parts[0])
+			restFields := strings.Fields(strings.TrimSpace(parts[1]))
+			if len(restFields) >= 3 {
+				profile.ZipCode = restFields[len(restFields)-1]
+				profile.State = restFields[len(restFields)-2]
+				profile.City = strings.Join(restFields[:len(restFields)-2], " ")
+			} else if len(restFields) == 2 {
+				profile.State = restFields[0]
+				profile.ZipCode = restFields[1]
 			}
 		}
 	}
@@ -1123,6 +1208,26 @@ func main() {
 
 	products := loadProductItems(*productsFileFlag, *targetURL, *targetSize)
 
+	discountExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "discount" {
+			discountExplicit = true
+		}
+	})
+
+	var discounts []string
+	if discountExplicit && *discountFlag != "" {
+		discounts = []string{*discountFlag}
+	} else {
+		fileDiscounts, err := readLinesFromFile(*discountFileFlag)
+		if err == nil && len(fileDiscounts) > 0 {
+			discounts = fileDiscounts
+			log.Printf("-> Đã đọc %d mã giảm giá từ '%s'\n", len(discounts), *discountFileFlag)
+		} else if *discountFlag != "" {
+			discounts = []string{*discountFlag}
+		}
+	}
+
 	log.Println("==================================================")
 	log.Println("     TOOL AUTOMATION BROWSER SOCKS5 (GOLANG)      ")
 	log.Println("==================================================")
@@ -1137,7 +1242,17 @@ func main() {
 	log.Printf("-> Địa chỉ tìm   : %s\n", profile.RawAddress)
 	log.Printf("-> Số điện thoại : %s\n", profile.Phone)
 	log.Printf("-> Thẻ tín dụng  : %s | %s/%s | CVV: %s\n", maskSecret("card", profile.CardNumber), profile.ExpMonth, profile.ExpYear, maskSecret("cvv", profile.CVV))
-	log.Printf("-> Mã giảm giá   : %s\n", *discountFlag)
+	if len(discounts) > 1 {
+		log.Printf("-> Mã giảm giá   : %d mã từ %s (lần lượt: %s...)\n", len(discounts), *discountFileFlag, discounts[0])
+	} else if len(discounts) == 1 {
+		if discountExplicit {
+			log.Printf("-> Mã giảm giá   : %s (chỉ định từ cờ lệnh)\n", discounts[0])
+		} else {
+			log.Printf("-> Mã giảm giá   : %s (từ %s)\n", discounts[0], *discountFileFlag)
+		}
+	} else {
+		log.Printf("-> Mã giảm giá   : Không sử dụng\n")
+	}
 
 	pm := NewProxyManager(*proxyFileFlag, "proxies_failed.txt", teleCfg)
 
@@ -1151,6 +1266,7 @@ func main() {
 
 	log.Printf("-> Số proxy khả dụng ban đầu: %d\n", pm.AvailableCount())
 
+	baseEmail := profile.Email
 	attemptCount := 0
 	maxProxyAttempts := 25
 
@@ -1169,21 +1285,30 @@ func main() {
 			currentUA = getRandomUserAgent(*uaFileFlag)
 		}
 
-		// Mỗi lần thử đổi proxy nếu không chỉ định phone cố định thì bốc ngẫu nhiên phone mới
+		taskProf := *profile
+		if baseEmail != "" {
+			taskProf.Email = baseEmail
+		}
 		if *phoneFlag == "" {
 			if randPhone := getRandomPhone(*phonesFileFlag); randPhone != "" {
-				profile.Phone = randPhone
+				taskProf.Phone = randPhone
 			}
 		}
 
 		chosenURL, chosenSize := getRandomProduct(products, *targetURL, *targetSize)
 
+		currentDiscount := ""
+		if len(discounts) > 0 {
+			currentDiscount = discounts[(attemptCount-1)%len(discounts)]
+		}
+
 		task := CheckoutTask{
 			URL:          chosenURL,
 			Size:         chosenSize,
 			Proxy:        currentProxy,
-			Profile:      profile,
-			DiscountCode: *discountFlag,
+			Profile:      &taskProf,
+			DiscountCode: currentDiscount,
+			DiscountFile: *discountFileFlag,
 			Headless:     *headless,
 			UserAgent:    currentUA,
 			TeleCfg:      teleCfg,
@@ -1200,6 +1325,9 @@ func main() {
 			log.Println("-> Giữ nguyên proxy này ở ĐẦU TIÊN file proxies.txt để mua tiếp ở phiên sau!")
 			log.Println("==================================================")
 			pm.MarkSuccess(currentProxy)
+			if task.DiscountCode != "" && *discountFileFlag != "" {
+				_ = removeDiscountFromFile(*discountFileFlag, task.DiscountCode)
+			}
 			time.Sleep(3 * time.Second)
 			return
 		}
@@ -1275,6 +1403,9 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+
+	// Khi gõ email thêm số ngẫu nhiên từ 1 - 9999 vào trước @
+	profile.Email = randomizeEmail(profile.Email)
 
 	if emailEl != nil {
 		log.Printf("-> Đang gõ Email: '%s' (Human Typing)...\n", profile.Email)
@@ -1450,8 +1581,16 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 				}
 			}
 
-			customAddr := formatAddressMax35(profile.FirstName, addrBase, profile.City, profile.ZipCode)
-			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (Độ dài: %d <= 35 ký tự)...\n", customAddr, len(customAddr))
+			fn := profile.FirstName
+			if fn == "" && profile.FullName != "" {
+				f := strings.Fields(profile.FullName)
+				if len(f) > 0 {
+					fn = f[0]
+				}
+			}
+
+			customAddr := formatAddressMax35(fn, addrBase, profile.City, profile.ZipCode)
+			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (firstname. address, Độ dài: %d <= 35 ký tự)...\n", customAddr, len(customAddr))
 			updateAddressField(page, customAddr)
 			time.Sleep(1 * time.Second)
 

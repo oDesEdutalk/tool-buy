@@ -61,6 +61,7 @@ type CheckoutTask struct {
 	Proxy        string
 	Profile      *UserProfile
 	DiscountCode string
+	DiscountFile string
 	Headless     bool
 	UserAgent    string
 	TeleCfg      TelegramConfig
@@ -332,6 +333,69 @@ func saveSuccessOrderToFile(task CheckoutTask, tyDetails ThankYouDetails, filePa
 		sendTelegramAlert(task.TeleCfg, teleMsg)
 	}
 
+	// 5. Xóa mã giảm giá đã dùng thành công khỏi file discounts.txt nếu có
+	if task.DiscountCode != "" {
+		discFile := task.DiscountFile
+		if discFile == "" {
+			discFile = "discounts.txt"
+		}
+		_ = removeDiscountFromFile(discFile, task.DiscountCode)
+	}
+
+	return nil
+}
+
+var discountFileMutex sync.Mutex
+
+// removeDiscountFromFile xóa mã giảm giá đã sử dụng thành công khỏi file discounts.txt
+func removeDiscountFromFile(filePath, codeToRemove string) error {
+	discountFileMutex.Lock()
+	defer discountFileMutex.Unlock()
+
+	codeToRemove = strings.TrimSpace(codeToRemove)
+	if codeToRemove == "" || filePath == "" {
+		return nil
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	rawStr := strings.ReplaceAll(string(content), "\r\n", "\n")
+	lines := strings.Split(rawStr, "\n")
+	var newLines []string
+	removed := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			newLines = append(newLines, line)
+			continue
+		}
+		if trimmed == "" {
+			newLines = append(newLines, "")
+			continue
+		}
+
+		if !removed && strings.EqualFold(trimmed, codeToRemove) {
+			removed = true
+			log.Printf("-> [DISCOUNT] Đã xóa mã giảm giá thành công '%s' khỏi file '%s'\n", codeToRemove, filePath)
+			continue
+		}
+		newLines = append(newLines, trimmed)
+	}
+
+	if removed {
+		for len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) == "" {
+			newLines = newLines[:len(newLines)-1]
+		}
+		output := strings.Join(newLines, "\r\n") + "\r\n"
+		return os.WriteFile(filePath, []byte(output), 0644)
+	}
 	return nil
 }
 
@@ -851,6 +915,20 @@ func readLinesFromFile(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+// randomizeEmail thêm một số ngẫu nhiên từ 1 đến 9999 vào trước ký tự @ của email
+func randomizeEmail(email string) string {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return fmt.Sprintf("user%d@gmail.com", rand.Intn(9999)+1)
+	}
+	randNum := rand.Intn(9999) + 1
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) == 2 {
+		return fmt.Sprintf("%s%d@%s", parts[0], randNum, parts[1])
+	}
+	return fmt.Sprintf("%s%d", email, randNum)
+}
+
 // defaultUserAgents danh sách User-Agent hiện đại dự phòng chuẩn BitBrowser Windows
 var defaultUserAgents = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
@@ -1049,9 +1127,20 @@ func main() {
 			log.Fatalf("[!] LỖI: Không tìm thấy hoặc file thẻ '%s' trống! Vui lòng kiểm tra lại file %s.", *cardFileFlag, *cardFileFlag)
 		}
 
-		discounts, _ = readLinesFromFile(*discountFileFlag)
-		if len(discounts) == 0 {
+		discountExplicit := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "discount" {
+				discountExplicit = true
+			}
+		})
+
+		if discountExplicit && *discountSingle != "" {
 			discounts = []string{*discountSingle}
+		} else {
+			discounts, _ = readLinesFromFile(*discountFileFlag)
+			if len(discounts) == 0 && *discountSingle != "" {
+				discounts = []string{*discountSingle}
+			}
 		}
 	}
 
@@ -1116,21 +1205,32 @@ func main() {
 			continue
 		}
 
-		// Địa chỉ nhận hàng: Luôn ưu tiên dùng addressFlag mặc định, không lấy địa chỉ từ thẻ
+		// Địa chỉ nhận hàng: Luôn ưu tiên dùng addressFlag mặc định, không lấy địa chỉ từ file thẻ
 		if *addressFlag != "" {
 			prof.RawAddress = *addressFlag
 			prof.Address = *addressFlag
-			if idx := strings.Index(*addressFlag, ","); idx != -1 {
-				prof.Address = strings.TrimSpace((*addressFlag)[:idx])
-				rest := strings.TrimSpace((*addressFlag)[idx+1:])
-				fields := strings.Fields(rest)
-				if len(fields) >= 3 {
-					prof.ZipCode = fields[len(fields)-1]
-					prof.State = fields[len(fields)-2]
-					prof.City = strings.Join(fields[:len(fields)-2], " ")
-				} else if len(fields) == 2 {
-					prof.State = fields[0]
-					prof.ZipCode = fields[1]
+			parts := strings.Split(*addressFlag, ",")
+			if len(parts) >= 3 {
+				prof.Address = strings.TrimSpace(parts[0])
+				prof.City = strings.TrimSpace(parts[1])
+				lastFields := strings.Fields(strings.TrimSpace(parts[2]))
+				if len(lastFields) >= 2 {
+					prof.State = lastFields[0]
+					prof.ZipCode = lastFields[len(lastFields)-1]
+				} else if len(parts) >= 4 {
+					prof.State = strings.TrimSpace(parts[2])
+					prof.ZipCode = strings.TrimSpace(parts[3])
+				}
+			} else if len(parts) == 2 {
+				prof.Address = strings.TrimSpace(parts[0])
+				restFields := strings.Fields(strings.TrimSpace(parts[1]))
+				if len(restFields) >= 3 {
+					prof.ZipCode = restFields[len(restFields)-1]
+					prof.State = restFields[len(restFields)-2]
+					prof.City = strings.Join(restFields[:len(restFields)-2], " ")
+				} else if len(restFields) == 2 {
+					prof.State = restFields[0]
+					prof.ZipCode = restFields[1]
 				}
 			}
 		}
@@ -1158,6 +1258,7 @@ func main() {
 			Proxy:        p,
 			Profile:      prof,
 			DiscountCode: d,
+			DiscountFile: *discountFileFlag,
 			Headless:     *headlessFlag,
 			UserAgent:    getRandomUserAgent(*uaFileFlag),
 			TeleCfg:      teleCfg,
@@ -1187,6 +1288,9 @@ func main() {
 			countMutex.Lock()
 			if err == nil {
 				successCount++
+				if t.DiscountCode != "" && t.DiscountFile != "" {
+					_ = removeDiscountFromFile(t.DiscountFile, t.DiscountCode)
+				}
 				appendResultFile("results_success.txt", fmt.Sprintf("Thành công: Thẻ %s | Email: %s | Proxy: %s | Mã: %s",
 					maskSecret("card", t.Profile.CardNumber), t.Profile.Email, finalUsedProxy, t.DiscountCode))
 			} else {
@@ -1544,6 +1648,9 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	// Khi gõ email thêm số ngẫu nhiên từ 1 - 9999 vào trước @
+	profile.Email = randomizeEmail(profile.Email)
+
 	if emailEl != nil {
 		log.Printf("-> Đang gõ Email: '%s' (Human Typing)...\n", profile.Email)
 		_ = humanType(page, emailEl, profile.Email)
@@ -1707,8 +1814,16 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 				addrBase = addressToType
 			}
 
-			customAddr := formatAddressMax35(profile.FirstName, addrBase, profile.City, profile.ZipCode)
-			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (Độ dài: %d <= 35 ký tự)...\n", customAddr, len(customAddr))
+			fn := profile.FirstName
+			if fn == "" && profile.FullName != "" {
+				f := strings.Fields(profile.FullName)
+				if len(f) > 0 {
+					fn = f[0]
+				}
+			}
+
+			customAddr := formatAddressMax35(fn, addrBase, profile.City, profile.ZipCode)
+			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (firstname. address, Độ dài: %d <= 35 ký tự)...\n", customAddr, len(customAddr))
 			updateAddressField(page, customAddr)
 			time.Sleep(1 * time.Second)
 
