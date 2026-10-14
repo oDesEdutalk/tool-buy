@@ -1412,7 +1412,7 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 		return err
 	}
 
-	page.MustWaitLoad()
+	_ = page.Timeout(30 * time.Second).WaitLoad()
 	time.Sleep(3 * time.Second)
 
 	// 1. Tắt banner cookies
@@ -2650,46 +2650,49 @@ func startLocalSocks5Bridge(upstreamAddr, user, pass string) (string, string, *f
 		return "", "", nil, nil, fmt.Errorf("không thể tạo dialer SOCKS5 upstream: %w", err)
 	}
 
-	// Lấy exit IP thực tế và toạ độ địa lý của Proxy (timeout 3s để không làm trễ quá trình)
+	// Lấy exit IP thực tế và toạ độ địa lý của Proxy (luôn dùng HTTPS Port 443 để khớp 100% với trình duyệt)
 	var exitIP string
 	var geoInfo *fingerprint.GeoLocationInfo
 
-	type ipAPIResp struct {
-		Status      string  `json:"status"`
-		CountryCode string  `json:"countryCode"`
-		RegionName  string  `json:"regionName"`
+	type ipWhoIsResp struct {
+		IP          string  `json:"ip"`
+		Success     bool    `json:"success"`
+		CountryCode string  `json:"country_code"`
+		Region      string  `json:"region"`
 		City        string  `json:"city"`
-		Zip         string  `json:"zip"`
-		Lat         float64 `json:"lat"`
-		Lon         float64 `json:"lon"`
-		Timezone    string  `json:"timezone"`
-		Offset      int     `json:"offset"`
-		Query       string  `json:"query"`
+		Postal      string  `json:"postal"`
+		Latitude    float64 `json:"latitude"`
+		Longitude   float64 `json:"longitude"`
+		Timezone    struct {
+			ID     string `json:"id"`
+			Offset int    `json:"offset"`
+		} `json:"timezone"`
 	}
 
 	checkClient := &http.Client{
 		Transport: &http.Transport{Dial: dialer.Dial},
-		Timeout:   3 * time.Second,
+		Timeout:   4 * time.Second,
 	}
 
-	resp, err := checkClient.Get("http://ip-api.com/json/?fields=status,countryCode,regionName,city,zip,lat,lon,timezone,offset,query")
+	// Luôn truy vấn qua HTTPS (Port 443) để lấy đúng Exit IP của web HTTPS
+	resp, err := checkClient.Get("https://ipwho.is")
 	if err == nil {
-		var info ipAPIResp
-		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && info.Status == "success" && info.Query != "" {
-			exitIP = info.Query
-			tzOffset := -info.Offset / 60
+		var info ipWhoIsResp
+		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && info.Success && info.IP != "" {
+			exitIP = info.IP
+			tzOffset := -info.Timezone.Offset / 60
 			if tzOffset < 0 {
 				tzOffset = 0
 			}
 			geoInfo = &fingerprint.GeoLocationInfo{
 				Country:        info.CountryCode,
-				State:          info.RegionName,
+				State:          info.Region,
 				City:           info.City,
-				ZipCode:        info.Zip,
-				Timezone:       info.Timezone,
+				ZipCode:        info.Postal,
+				Timezone:       info.Timezone.ID,
 				TimezoneOffset: tzOffset,
-				Latitude:       info.Lat,
-				Longitude:      info.Lon,
+				Latitude:       info.Latitude,
+				Longitude:      info.Longitude,
 			}
 		}
 		resp.Body.Close()

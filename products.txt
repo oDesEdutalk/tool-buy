@@ -1,4 +1,4 @@
 # Danh sách link sản phẩm và size cần mua (định dạng: URL|Size)
 # Mỗi dòng là một URL kèm size, ngăn cách bởi dấu |
 # Tool sẽ chọn ngẫu nhiên sản phẩm và size từ file này cho từng luồng/tác vụ mua hàng.
-https://www.on.com/en-us/products/cloudboom-max-m-3mf3031/mens/lime-raspberry-shoes-3MF30314229|9
+https://www.on.com/en-us/products/5-court-shorts-m-1mg1019/mens/inkwell-apparel-1MG10195495|XS

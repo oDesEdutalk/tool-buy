@@ -862,7 +862,7 @@ func executeSingleCheckout(task CheckoutTask) error {
 			}
 
 			// 3. Chống rò rỉ DNS Leak: Ép Chrome uỷ quyền toàn bộ DNS cho Proxy, cấm phân giải DNS cục bộ
-			l = l.Proxy("socks5://" + localProxyAddr).
+			l = l.Proxy("socks5://"+localProxyAddr).
 				Set("host-resolver-rules", "MAP * ~NOTFOUND , EXCLUDE 127.0.0.1").
 				Set("disable-async-dns", "").
 				Set("disable-features", "DnsOverHttps,AsyncDns")
@@ -914,7 +914,7 @@ func executeSingleCheckout(task CheckoutTask) error {
 		return fmt.Errorf("lỗi khi truy cập trang web: %w", err)
 	}
 
-	page.MustWaitLoad()
+	_ = page.Timeout(30 * time.Second).WaitLoad()
 	log.Println("-> ĐÃ MỞ TRANG THÀNH CÔNG!")
 	time.Sleep(3 * time.Second)
 
@@ -1047,7 +1047,7 @@ func main() {
 	monthFlag := flag.String("month", "", "Tháng hết hạn MM")
 	yearFlag := flag.String("year", "", "Năm hết hạn YY")
 	cvvFlag := flag.String("cvv", "", "Mã bảo mật CVV")
-	discountFlag := flag.String("discount", "IDME_ON_20_OUVMKC", "Mã giảm giá (Discount code)")
+	discountFlag := flag.String("discount", "IDME_ON_20_ITULQV", "Mã giảm giá (Discount code)")
 
 	flag.Parse()
 
@@ -1080,7 +1080,13 @@ func main() {
 	if *lastNameFlag != "" {
 		profile.LastName = *lastNameFlag
 	}
-	if *addressFlag != "" {
+	addressExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "address" {
+			addressExplicit = true
+		}
+	})
+	if (addressExplicit || profile.RawAddress == "") && *addressFlag != "" {
 		profile.RawAddress = *addressFlag
 		profile.Address = *addressFlag
 		if idx := strings.Index(*addressFlag, ","); idx != -1 {
@@ -2211,7 +2217,7 @@ func humanType(page *rod.Page, el *rod.Element, text string) error {
 	typeHumanLike(safeEl, text, false)
 
 	// Đảm bảo dữ liệu đã vào đúng và trigger các sự kiện React
-	_, _ = safeEl.Timeout(2 * time.Second).Eval(`(el, expected) => {
+	_, _ = safeEl.Timeout(2*time.Second).Eval(`(el, expected) => {
 		if (el.value !== expected) {
 			el.value = expected;
 		}
@@ -2471,46 +2477,49 @@ func startLocalSocks5Bridge(upstreamAddr, user, pass string) (string, string, *f
 		return "", "", nil, nil, fmt.Errorf("không thể tạo dialer SOCKS5 upstream: %w", err)
 	}
 
-	// Lấy exit IP thực tế và toạ độ địa lý của Proxy (timeout 3s để không làm trễ quá trình)
+	// Lấy exit IP thực tế và toạ độ địa lý của Proxy (luôn dùng HTTPS Port 443 để khớp 100% với trình duyệt)
 	var exitIP string
 	var geoInfo *fingerprint.GeoLocationInfo
 
-	type ipAPIResp struct {
-		Status      string  `json:"status"`
-		CountryCode string  `json:"countryCode"`
-		RegionName  string  `json:"regionName"`
+	type ipWhoIsResp struct {
+		IP          string  `json:"ip"`
+		Success     bool    `json:"success"`
+		CountryCode string  `json:"country_code"`
+		Region      string  `json:"region"`
 		City        string  `json:"city"`
-		Zip         string  `json:"zip"`
-		Lat         float64 `json:"lat"`
-		Lon         float64 `json:"lon"`
-		Timezone    string  `json:"timezone"`
-		Offset      int     `json:"offset"`
-		Query       string  `json:"query"`
+		Postal      string  `json:"postal"`
+		Latitude    float64 `json:"latitude"`
+		Longitude   float64 `json:"longitude"`
+		Timezone    struct {
+			ID     string `json:"id"`
+			Offset int    `json:"offset"`
+		} `json:"timezone"`
 	}
 
 	checkClient := &http.Client{
 		Transport: &http.Transport{Dial: dialer.Dial},
-		Timeout:   3 * time.Second,
+		Timeout:   4 * time.Second,
 	}
 
-	resp, err := checkClient.Get("http://ip-api.com/json/?fields=status,countryCode,regionName,city,zip,lat,lon,timezone,offset,query")
+	// Luôn truy vấn qua HTTPS (Port 443) để lấy đúng Exit IP của web HTTPS
+	resp, err := checkClient.Get("https://ipwho.is")
 	if err == nil {
-		var info ipAPIResp
-		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && info.Status == "success" && info.Query != "" {
-			exitIP = info.Query
-			tzOffset := -info.Offset / 60
+		var info ipWhoIsResp
+		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && info.Success && info.IP != "" {
+			exitIP = info.IP
+			tzOffset := -info.Timezone.Offset / 60
 			if tzOffset < 0 {
 				tzOffset = 0
 			}
 			geoInfo = &fingerprint.GeoLocationInfo{
 				Country:        info.CountryCode,
-				State:          info.RegionName,
+				State:          info.Region,
 				City:           info.City,
-				ZipCode:        info.Zip,
-				Timezone:       info.Timezone,
+				ZipCode:        info.Postal,
+				Timezone:       info.Timezone.ID,
 				TimezoneOffset: tzOffset,
-				Latitude:       info.Lat,
-				Longitude:      info.Lon,
+				Latitude:       info.Latitude,
+				Longitude:      info.Longitude,
 			}
 		}
 		resp.Body.Close()
@@ -3252,7 +3261,7 @@ func clickPayNowButton(page *rod.Page) (bool, string) {
 		if vis {
 			_ = payBtn.Timeout(2 * time.Second).ScrollIntoView()
 			time.Sleep(150 * time.Millisecond)
-			_ = payBtn.Timeout(2 * time.Second).Click(proto.InputMouseButtonLeft, 1)
+			_ = payBtn.Timeout(2*time.Second).Click(proto.InputMouseButtonLeft, 1)
 			return true, "Pay now"
 		}
 	}

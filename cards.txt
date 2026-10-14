@@ -1,3 +1,1 @@
-# Danh sách thông tin thẻ & địa chỉ thanh toán (mỗi dòng 1 profile)
-# Định dạng: Số thẻ|Tháng|Năm|CVV|Họ tên|Địa chỉ|Thành phố|Bang|Zip code|Quốc gia|Số điện thoại|Email
-4127770010937223|02|28|753|Joanne Brehm|UNITED STATES|COMENITY BANK|CREDIT|TRADITIONAL|VISA|||||||
+4420572754613927|03|31|849|Margaret Ramirez|87600 Hannah Ridge|Peterburgh|Idaho|86678|US|(004) 468-2798|pfields@aol.com|LIVE|85 No reason to decline|T0CHECK.CO
