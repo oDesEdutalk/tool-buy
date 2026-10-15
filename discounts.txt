@@ -1,3 +1,0 @@
-# Danh sách mã giảm giá (mỗi dòng 1 mã)
-IDME_ON_20_JOLDOZ
-IDME_ON_20_PROMO2
