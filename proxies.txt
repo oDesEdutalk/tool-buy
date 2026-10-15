@@ -1,2 +1,1 @@
-# Danh sách Socks5 Proxy (Cập nhật tự động bởi Tool)
-# Các proxy mua thành công được xếp ưu tiên trên đầu cho phiên tiếp theo:
+global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-session-56289702:41b761

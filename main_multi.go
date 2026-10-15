@@ -838,16 +838,19 @@ func parseDataString(raw string) *UserProfile {
 			profile.LastName = strings.Join(nameParts[1:], " ")
 		}
 		cleanName := strings.ToLower(strings.ReplaceAll(profile.FullName, " ", ""))
-		profile.Email = fmt.Sprintf("%s@gmail.com", cleanName)
+		_ = cleanName
 	}
 
+	// Email phải lấy firstname + lastName + random số từ 1 - 999 + @gmail.com
+	profile.Email = generateEmail(profile.FirstName, profile.LastName)
+
 	// Quét thông minh qua tất cả các cột phía sau:
-	// - Nếu có cột chứa '@' -> lấy làm Email
-	// - Nếu có cột là số điện thoại (10-15 ký tự) -> lấy làm Phone
+	// - Nếu có cột là số điện thoại (10-15 ký tự) -> lấy làm Phone (không lấy cột chứa '@')
 	for i := 5; i < len(parts); i++ {
 		p := parts[i]
 		if strings.Contains(p, "@") {
-			profile.Email = p
+			// Bỏ qua cột email từ cards.txt theo yêu cầu
+			continue
 		} else if profile.Phone == "" && len(p) >= 10 && len(p) <= 15 {
 			var digits strings.Builder
 			for _, r := range p {
@@ -878,9 +881,6 @@ func parseDataString(raw string) *UserProfile {
 	}
 	if len(parts) > 10 {
 		profile.Phone = parts[10]
-	}
-	if len(parts) > 11 && parts[11] != "" {
-		profile.Email = parts[11]
 	}
 
 	if profile.Address != "" {
@@ -915,18 +915,27 @@ func readLinesFromFile(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-// randomizeEmail thêm một số ngẫu nhiên từ 1 đến 9999 vào trước ký tự @ của email
-func randomizeEmail(email string) string {
-	email = strings.TrimSpace(email)
-	if email == "" {
-		return fmt.Sprintf("user%d@gmail.com", rand.Intn(9999)+1)
+// generateEmail tạo email theo định dạng: firstname + lastName + số ngẫu nhiên từ 1 - 999 + @gmail.com
+func generateEmail(firstName, lastName string) string {
+	fn := strings.ToLower(strings.TrimSpace(firstName))
+	ln := strings.ToLower(strings.TrimSpace(lastName))
+	var sb strings.Builder
+	for _, r := range fn + ln {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+		}
 	}
-	randNum := rand.Intn(9999) + 1
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) == 2 {
-		return fmt.Sprintf("%s%d@%s", parts[0], randNum, parts[1])
+	cleanName := sb.String()
+	if cleanName == "" {
+		cleanName = "user"
 	}
-	return fmt.Sprintf("%s%d", email, randNum)
+	randNum := rand.Intn(999) + 1 // ngẫu nhiên từ 1 đến 999
+	return fmt.Sprintf("%s%d@gmail.com", cleanName, randNum)
+}
+
+// randomizeEmail hỗ trợ tương thích tạo email theo firstname + lastName + random(1-999) + @gmail.com
+func randomizeEmail(email string, firstName, lastName string) string {
+	return generateEmail(firstName, lastName)
 }
 
 // defaultUserAgents danh sách User-Agent hiện đại dự phòng chuẩn BitBrowser Windows
@@ -1648,8 +1657,10 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Khi gõ email thêm số ngẫu nhiên từ 1 - 9999 vào trước @
-	profile.Email = randomizeEmail(profile.Email)
+	// Email phải lấy firstname + lastName + random số từ 1 - 999 + @gmail.com
+	if profile.Email == "" || !strings.Contains(profile.Email, "@") {
+		profile.Email = generateEmail(profile.FirstName, profile.LastName)
+	}
 
 	if emailEl != nil {
 		log.Printf("-> Đang gõ Email: '%s' (Human Typing)...\n", profile.Email)
@@ -1821,10 +1832,15 @@ func fillCheckoutForm(page *rod.Page, profile *UserProfile) error {
 					fn = f[0]
 				}
 			}
-
-			customAddr := formatAddressMax35(fn, addrBase, profile.City, profile.ZipCode)
-			log.Printf("-> Đang cập nhật lại ô Address thành: '%s' (firstname. address, Độ dài: %d <= 35 ký tự)...\n", customAddr, len(customAddr))
-			updateAddressField(page, customAddr)
+			// firstname + ". " phải typing, đừng gán luôn vào value của address
+			if fn != "" {
+				prefix := fmt.Sprintf("%s. ", fn)
+				log.Printf("-> Đang tiến hành typing tiền tố '%s' vào đầu ô Address (Human Typing, không gán value)...\n", prefix)
+				err := typePrefixIntoAddressField(page, prefix, addrBase)
+				if err != nil {
+					log.Printf("[!] Cảnh báo khi typing tiền tố address: %v\n", err)
+				}
+			}
 			time.Sleep(1 * time.Second)
 
 			waitForAddressAPIToComplete(page)
@@ -2381,7 +2397,137 @@ func checkAndFixAddressFieldBeforePayNow(page *rod.Page, profile *UserProfile) {
 	log.Println("--------------------------------------------------")
 }
 
-// updateAddressField cập nhật lại giá trị ô địa chỉ thành firstname.address và đóng gợi ý
+// typePrefixIntoAddressField gõ tiền tố firstname + ". " vào đầu ô địa chỉ (Human Typing, không gán trực tiếp value)
+func typePrefixIntoAddressField(page *rod.Page, prefix string, addrBase string) error {
+	if prefix == "" {
+		return nil
+	}
+
+	selectors := []string{
+		`input[name="shippingAddress.address1"]`,
+		`input[name="address1"]`,
+		`input#shipping-address1`,
+		`input#address1`,
+		`input[name="address"]`,
+		`input[name="streetAddress"]`,
+		`input[placeholder*="enter an address" i]`,
+		`input[placeholder*="house number" i]`,
+		`input[placeholder*="Address" i]`,
+		`input[placeholder*="Street" i]`,
+		`input[autocomplete="address-line1"]`,
+		`input[autocomplete="shipping address-line1"]`,
+		`input[id*="address" i]`,
+	}
+
+	addrEl := findInputField(page, selectors)
+	if addrEl == nil {
+		return fmt.Errorf("không tìm thấy ô address input")
+	}
+
+	// Lấy giá trị hiện tại của ô input
+	currentVal := getAddressFieldValue(page)
+	if currentVal == "" {
+		currentVal = addrBase
+	}
+	currentVal = strings.TrimSpace(currentVal)
+
+	lowerPrefix := strings.ToLower(prefix)
+	lowerVal := strings.ToLower(currentVal)
+
+	// Nếu ô đã bắt đầu bằng prefix thì không cần gõ lại
+	if strings.HasPrefix(lowerVal, lowerPrefix) {
+		log.Printf("-> Ô địa chỉ đã có tiền tố '%s' (giá trị hiện tại: '%s'), bỏ qua không gõ lại.\n", prefix, currentVal)
+		return nil
+	}
+
+	// Nếu đã có tiền tố cũ nhưng khác (ví dụ "f." hoặc "John."), loại bỏ nó khỏi currentVal
+	if strings.Contains(currentVal, ". ") {
+		idx := strings.Index(currentVal, ". ")
+		if idx <= 15 {
+			currentVal = strings.TrimSpace(currentVal[idx+2:])
+		}
+	}
+
+	// Đảm bảo tổng độ dài (len(prefix) + len(street)) <= 35 theo quy định Shopify
+	maxStreetLen := 35 - len(prefix)
+	if maxStreetLen > 0 && len(currentVal) > maxStreetLen {
+		abbrStreet := abbreviateStreet(currentVal)
+		if len(abbrStreet) > maxStreetLen {
+			abbrStreet = strings.TrimSpace(abbrStreet[:maxStreetLen])
+			abbrStreet = strings.TrimRight(abbrStreet, ",.- ")
+		}
+		currentVal = abbrStreet
+		// Cập nhật lại phần base street bằng typing nếu cần rút gọn để đảm bảo <= 35 ký tự
+		_ = addrEl.Focus()
+		_ = addrEl.SelectAllText()
+		_ = addrEl.Input(currentVal)
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	// Focus ô địa chỉ và đưa con trỏ chuột về đầu (vị trí 0)
+	_ = addrEl.ScrollIntoView()
+	time.Sleep(60 * time.Millisecond)
+	_ = addrEl.Focus()
+	time.Sleep(60 * time.Millisecond)
+
+	// Đưa selectionRange về (0,0) và nhấn Home để con trỏ ở vị trí ký tự đầu tiên
+	_, _ = page.Eval(`(selList) => {
+		for (const sel of selList) {
+			const el = document.querySelector(sel);
+			if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) {
+				el.focus();
+				if (typeof el.setSelectionRange === 'function') {
+					el.setSelectionRange(0, 0);
+				}
+				return true;
+			}
+		}
+		return false;
+	}`, selectors)
+	time.Sleep(60 * time.Millisecond)
+	_ = page.Keyboard.Press(input.Home)
+	time.Sleep(60 * time.Millisecond)
+
+	log.Printf("-> Đang gõ tiền tố '%s' vào đầu ô Address (Human Typing)...\n", prefix)
+
+	// Gõ từng ký tự của prefix (mô phỏng nhịp điệu người thật)
+	for _, ch := range prefix {
+		charStr := string(ch)
+		// Dùng page.InsertText để chèn ký tự tại vị trí con trỏ hiện tại (đầu chuỗi)
+		err := page.Timeout(500 * time.Millisecond).InsertText(charStr)
+		if err != nil {
+			_ = addrEl.Timeout(400 * time.Millisecond).Input(charStr)
+		}
+
+		// Trigger input event
+		_, _ = addrEl.Timeout(300 * time.Millisecond).Eval(`() => {
+			this.dispatchEvent(new Event('input', { bubbles: true }));
+		}`)
+
+		delay := 55 + rand.Intn(45)
+		if ch == '.' || ch == ' ' {
+			delay = 130 + rand.Intn(90)
+		}
+		time.Sleep(time.Duration(delay) * time.Millisecond)
+	}
+
+	// Đóng triệt để gợi ý dropdown nếu xuất hiện
+	time.Sleep(200 * time.Millisecond)
+	_ = page.Keyboard.Press(input.Escape)
+	time.Sleep(150 * time.Millisecond)
+
+	// Trigger change event
+	_, _ = addrEl.Timeout(500 * time.Millisecond).Eval(`() => {
+		this.dispatchEvent(new Event('input', { bubbles: true }));
+		this.dispatchEvent(new Event('change', { bubbles: true }));
+	}`)
+
+	finalAddr := getAddressFieldValue(page)
+	log.Printf("-> ĐÃ GÕ XONG TIỀN TỐ VÀO Ô ĐỊA CHỈ: '%s' (Độ dài: %d <= 35 ký tự)\n", finalAddr, len(finalAddr))
+	return nil
+}
+
+// updateAddressField cập nhật lại giá trị ô địa chỉ bằng Human Typing và đóng gợi ý
 func updateAddressField(page *rod.Page, newAddress string) {
 	if len(newAddress) > 35 {
 		newAddress = strings.TrimSpace(newAddress[:35])
@@ -2403,47 +2549,12 @@ func updateAddressField(page *rod.Page, newAddress string) {
 
 	addrEl := findInputField(page, selectors)
 	if addrEl != nil {
-		_ = addrEl.Focus()
-		_ = addrEl.SelectAllText()
-		_ = addrEl.Input(newAddress)
+		_ = humanType(page, addrEl, newAddress)
 	}
-
-	// Đảm bảo cập nhật bằng cả JavaScript Event để React/Shopify nhận diện 100%
-	_, _ = page.Eval(`(val) => {
-		const selectors = [
-			'input[name="address1"]',
-			'input[name="address"]',
-			'input[name="streetAddress"]',
-			'input[name="shippingAddress.address1"]',
-			'input#address1',
-			'input#shipping-address1',
-			'input[placeholder*="enter an address" i]',
-			'input[placeholder*="Address" i]'
-		];
-		for (const sel of selectors) {
-			const el = document.querySelector(sel);
-			if (el) {
-				const rect = el.getBoundingClientRect();
-				if (rect.width > 0 && rect.height > 0) {
-					el.focus();
-					const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-					if (setter) {
-						setter.call(el, val);
-					} else {
-						el.value = val;
-					}
-					el.dispatchEvent(new Event('input', { bubbles: true }));
-					el.dispatchEvent(new Event('change', { bubbles: true }));
-					el.blur();
-					return true;
-				}
-			}
-		}
-		return false;
-	}`, newAddress)
 
 	// Đóng triệt để popup dropdown gợi ý nếu còn mở và không cần click suggestion nữa
 	_ = page.Keyboard.Press(input.Escape)
+	log.Println("-> Đã cập nhật xong ô địa chỉ bằng Human Typing (không cần click suggestion nữa).")
 }
 
 // findInputField tìm kiếm ô input theo danh sách selector (dùng Has để không bao giờ bị treo)
