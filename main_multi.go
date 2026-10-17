@@ -1634,7 +1634,7 @@ func executeSingleBrowserCheckout(task CheckoutTask) (taskErr error) {
 	// 6. Nhập mã giảm giá
 	if task.DiscountCode != "" {
 		logWorker(workerID, "-> [BƯỚC 6/8] Đang nhập và áp dụng mã giảm giá '%s'...\n", task.DiscountCode)
-		err = applyDiscountCode(page, task.DiscountCode)
+		err = applyDiscountCode(page, task.DiscountCode, profile)
 		if err != nil {
 			logWorker(workerID, "[!] [BƯỚC 6/8] Cảnh báo mã giảm giá '%s': %v\n", task.DiscountCode, err)
 		} else {
@@ -3464,168 +3464,256 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	return nil
 }
 
-// clickAddDiscountIfPresent kiểm tra và click nút 'Add discount' nếu có, để mở ô nhập mã giảm giá
-func clickAddDiscountIfPresent(page *rod.Page) bool {
-	// 1. Kiểm tra trước: Nếu ô nhập reductions đã hiển thị sẵn thì không bấm nữa (tránh toggle đóng lại)
-	alreadyOpen, err := page.Eval(`() => {
-		const sel = 'input[name="reductions"], input#reductions, input[name*="reduction"], input[placeholder*="Discount" i], input[aria-label*="Discount" i]';
-		const inp = document.querySelector(sel);
-		if (inp) {
-			const rect = inp.getBoundingClientRect();
-			return rect.width > 0 && rect.height > 0 && window.getComputedStyle(inp).visibility !== 'hidden';
-		}
-		return false;
-	}`)
-	if err == nil && alreadyOpen != nil && alreadyOpen.Value.Bool() {
-		log.Println("-> Ô nhập mã giảm giá đã hiển thị sẵn, tiến hành nhập luôn.")
-		return false
+// restoreCheckoutFieldsIfTampered đảm bảo ô Phone không bị dính nhầm ký tự của discount và Zip code được điền đầy đủ
+func restoreCheckoutFieldsIfTampered(page *rod.Page, profile *UserProfile) {
+	if profile == nil {
+		return
 	}
-
-	// 2. Tìm nút 'Add discount'
-	btnEl, err := page.ElementByJS(rod.Eval(`() => {
-		const candidates = Array.from(document.querySelectorAll('button, [role="button"], a, summary, [type="button"]'));
-		for (const el of candidates) {
-			const rect = el.getBoundingClientRect();
-			if (rect.width <= 0 || rect.height <= 0) continue;
-
-			const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-			const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-
-			// Tuyệt đối bỏ qua Gift card
-			if (text.includes('gift card') || aria.includes('gift card')) {
-				continue;
-			}
-
-			// Khớp với 'Add discount', 'Add a discount', 'Add promo'
-			if (text.includes('add discount') || aria.includes('add discount') ||
-				text.includes('add a discount') || aria.includes('add a discount') ||
-				text === 'add discount' || aria === 'add discount' ||
-				text.includes('add promo') || aria.includes('add promo')) {
-				return el;
+	_, _ = page.Eval(`(data) => {
+		// 1. Khôi phục Phone nếu bị ghi đè hoặc chứa '20' hoặc ký tự lạ
+		if (data.phone) {
+			const phoneInps = Array.from(document.querySelectorAll('input[type="tel"], input[name*="phone" i], input#phone, input[autocomplete*="tel" i]'));
+			for (const p of phoneInps) {
+				const val = (p.value || '').trim();
+				if (val === '20' || val.length < 7 || val.includes('IDME') || val.includes('discount')) {
+					p.focus();
+					p.value = data.phone;
+					p.dispatchEvent(new Event('input', { bubbles: true }));
+					p.dispatchEvent(new Event('change', { bubbles: true }));
+					p.blur();
+				}
 			}
 		}
+		// 2. Điền Zip code nếu bị bỏ trống
+		if (data.zip) {
+			const zipInps = Array.from(document.querySelectorAll('input[name="postalCode"], input[name="zip"], input[name="zipcode"], input#postalCode, input[placeholder*="ZIP" i], input[placeholder*="postal" i]'));
+			for (const z of zipInps) {
+				if (!z.value || z.value.trim() === '') {
+					z.focus();
+					z.value = data.zip;
+					z.dispatchEvent(new Event('input', { bubbles: true }));
+					z.dispatchEvent(new Event('change', { bubbles: true }));
+					z.blur();
+				}
+			}
+		}
+	}`, map[string]string{
+		"phone": profile.Phone,
+		"zip":   profile.ZipCode,
+	})
+}
 
-		// Fallback tìm phần tử chứa text 'Add discount' (ví dụ span/p nằm trong button)
-		const allTextEls = Array.from(document.querySelectorAll('span, p, div, b, strong'));
-		for (const el of allTextEls) {
-			const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-			if (text === 'add discount' || text === 'add a discount') {
-				const parentBtn = el.closest('button, [role="button"], a') || el;
-				const rect = parentBtn.getBoundingClientRect();
-				if (rect.width > 0 && rect.height > 0) {
-					return parentBtn;
+// clickAddDiscountIfPresent tìm và click nút 'Add discount' (đặc biệt là nút nằm cùng hàng với #mobile-order-summary-heading)
+func clickAddDiscountIfPresent(page *rod.Page) bool {
+	res, err := page.Eval(`() => {
+		// 1. ƯU TIÊN SỐ 1: Nút Add discount nằm cùng hàng trong container flex của #mobile-order-summary-heading
+		const heading = document.getElementById('mobile-order-summary-heading');
+		if (heading) {
+			// Tìm button là sibling hoặc trong container flex cha
+			const parent = heading.parentElement;
+			if (parent) {
+				const btn = parent.querySelector('button');
+				if (btn) {
+					const ariaExp = btn.getAttribute('aria-expanded');
+					if (ariaExp === 'false' || !ariaExp) {
+						btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						btn.click();
+						return 'CLICKED_HEADING_BUTTON';
+					} else if (ariaExp === 'true') {
+						return 'ALREADY_EXPANDED';
+					}
+				}
+			}
+			const siblingBtn = heading.nextElementSibling;
+			if (siblingBtn && siblingBtn.tagName === 'BUTTON') {
+				const ariaExp = siblingBtn.getAttribute('aria-expanded');
+				if (ariaExp === 'false' || !ariaExp) {
+					siblingBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					siblingBtn.click();
+					return 'CLICKED_HEADING_SIBLING';
+				} else if (ariaExp === 'true') {
+					return 'ALREADY_EXPANDED';
 				}
 			}
 		}
 
-		return null;
-	}`))
+		// 2. Tìm bất kỳ button nào có aria-expanded="false" liên quan tới discount hoặc order-summary
+		const summaryBtns = Array.from(document.querySelectorAll('button[aria-expanded="false"], [role="button"][aria-expanded="false"]'));
+		for (const b of summaryBtns) {
+			const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+			const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+			if (text.includes('gift card') || aria.includes('gift card')) continue;
 
-	if err == nil && btnEl != nil {
-		log.Println("-> [PHÁT HIỆN] Tìm thấy button 'Add discount'! Đang click vào để mở ô nhập mã giảm giá...")
-		_ = btnEl.ScrollIntoView()
-		time.Sleep(150 * time.Millisecond)
-		_ = btnEl.Click(proto.InputMouseButtonLeft, 1)
-		_, _ = btnEl.Eval(`() => { this.click(); }`)
-		time.Sleep(800 * time.Millisecond) // Đợi animation mở khung reductions
-		return true
+			if (text.includes('add discount') || aria.includes('add discount') ||
+				text.includes('discount') || aria.includes('discount') ||
+				text.includes('order summary') || aria.includes('order summary')) {
+				b.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				b.click();
+				return 'CLICKED_SUMMARY_BUTTON';
+			}
+		}
+
+		// 3. Tìm button hoặc phần tử có text "Add discount"
+		const allBtns = Array.from(document.querySelectorAll('button, [role="button"], a, summary'));
+		for (const b of allBtns) {
+			const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+			const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+			if (text.includes('gift card') || aria.includes('gift card')) continue;
+
+			if (text.includes('add discount') || aria.includes('add discount') ||
+				text.includes('add a discount') || aria.includes('add a discount') ||
+				text.includes('add promo') || aria.includes('add promo')) {
+				const isExpanded = b.getAttribute('aria-expanded') === 'true';
+				if (!isExpanded) {
+					b.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					b.click();
+					return 'CLICKED_TEXT_BUTTON';
+				} else {
+					return 'ALREADY_EXPANDED';
+				}
+			}
+		}
+
+		return 'NOT_FOUND';
+	}`)
+
+	if err == nil && res != nil {
+		status := res.Value.String()
+		if strings.HasPrefix(status, "CLICKED") {
+			log.Printf("-> [PHÁT HIỆN & CLICK THÀNH CÔNG] Đã click nút 'Add discount' (%s)! Đang chờ mở khung nhập...\n", status)
+			time.Sleep(1200 * time.Millisecond) // Đợi drawer/accordion mở ra
+			return true
+		} else if status == "ALREADY_EXPANDED" {
+			log.Println("-> Khung 'Add discount' đã được mở sẵn (aria-expanded=true), tiến hành nhập mã luôn.")
+			return false
+		}
 	}
 
-	log.Println("-> Không tìm thấy button 'Add discount' (hoặc ô nhập đã mở sẵn), tiến hành nhập luôn.")
+	log.Println("-> Không tìm thấy nút 'Add discount' riêng biệt, kiểm tra trực tiếp ô nhập mã giảm giá.")
 	return false
 }
 
 // applyDiscountCode tìm ô name="reductions", xoá sạch dữ liệu, nhập mã giảm giá và bấm Apply
-func applyDiscountCode(page *rod.Page, discountCode string) error {
+func applyDiscountCode(page *rod.Page, discountCode string, profOpt ...*UserProfile) error {
 	discountCode = strings.TrimSpace(discountCode)
 	if discountCode == "" {
 		return nil
 	}
 
-	// 1. Kiểm tra button 'Add discount', nếu có thì click vào trước
+	var profile *UserProfile
+	if len(profOpt) > 0 {
+		profile = profOpt[0]
+	}
+
+	// 1. Unfocus/blur ngay lập tức ô Phone (để không bao giờ bị gõ nhầm mã giảm giá vào ô Phone)
+	_, _ = page.Eval(`() => {
+		if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+			document.activeElement.blur();
+		}
+	}`)
+
+	// 2. Click nút 'Add discount' (ưu tiên nút cùng hàng với #mobile-order-summary-heading)
 	clickAddDiscountIfPresent(page)
 
 	startTime := time.Now()
 	timeout := 20 * time.Second
 
 	for time.Since(startTime) < timeout {
-		// 2. Tìm ô nhập name="reductions"
-		var reductionsInput *rod.Element
-		selectors := []string{
-			`input[name="reductions"]`,
-			`input#reductions`,
-			`input[name*="reduction"]`,
-			`input[placeholder*="Discount" i]`,
-			`input[placeholder*="Promo" i]`,
-			`input[aria-label*="Discount" i]`,
-		}
-
-		for _, sel := range selectors {
-			has, el, err := page.Has(sel)
-			if err == nil && has && el != nil {
-				vis, _ := el.Timeout(500 * time.Millisecond).Visible()
-				if vis {
-					reductionsInput = el
-					break
+		// 3. Tìm ô nhập reductions đang THỰC SỰ HIỂN THỊ (visible) và focus vào nó
+		focused, err := page.Eval(`() => {
+			const sel = 'input[name="reductions"], input#reductions, input[name*="reduction"], input[placeholder*="Discount" i]';
+			const inputs = Array.from(document.querySelectorAll(sel));
+			for (const inp of inputs) {
+				const rect = inp.getBoundingClientRect();
+				const style = window.getComputedStyle(inp);
+				if (rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+					inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					inp.focus();
+					return true;
 				}
 			}
-		}
+			return false;
+		}`)
 
-		// Nếu sau 2s vẫn chưa thấy ô reductions, thử kích hoạt lại Add discount nếu có
-		if reductionsInput == nil && time.Since(startTime) > 2*time.Second {
+		hasVisibleInput := (err == nil && focused != nil && focused.Value.Bool())
+
+		if !hasVisibleInput && time.Since(startTime) > 2*time.Second {
+			// Thử kích hoạt lại nút Add discount nếu sau 2s vẫn chưa thấy ô input mở ra
 			clickAddDiscountIfPresent(page)
 		}
 
-		if reductionsInput != nil {
-			_ = reductionsInput.ScrollIntoView()
-			time.Sleep(100 * time.Millisecond)
-			_ = reductionsInput.Click(proto.InputMouseButtonLeft, 1)
-			time.Sleep(80 * time.Millisecond)
+		if hasVisibleInput {
+			// Lấy element reductions đã được focus
+			reductionsInput, err := page.Element(`input[name="reductions"], input#reductions, input[name*="reduction"], input[placeholder*="Discount" i]`)
+			if err == nil && reductionsInput != nil {
+				_ = reductionsInput.Click(proto.InputMouseButtonLeft, 1)
+				time.Sleep(100 * time.Millisecond)
 
-			_ = reductionsInput.SelectAllText()
-			_ = page.Keyboard.Press(input.ControlLeft)
-			_ = page.Keyboard.Press(input.KeyA)
-			_ = page.Keyboard.Release(input.ControlLeft)
-			_ = page.Keyboard.Press(input.Backspace)
-			_, _ = reductionsInput.Eval(`() => { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); }`)
-			time.Sleep(80 * time.Millisecond)
+				// Xoá sạch dữ liệu cũ
+				_ = reductionsInput.SelectAllText()
+				_, _ = reductionsInput.Eval(`() => { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); }`)
+				time.Sleep(100 * time.Millisecond)
 
-			typeHumanLike(reductionsInput, discountCode, false)
-			time.Sleep(time.Duration(150+rand.Intn(100)) * time.Millisecond)
+				// Gõ mã giảm giá
+				typeHumanLike(reductionsInput, discountCode, false)
+				time.Sleep(time.Duration(150+rand.Intn(100)) * time.Millisecond)
 
-			_ = page.Keyboard.Press(input.Enter)
-			time.Sleep(300 * time.Millisecond)
+				// Đảm bảo value đã được gán chính xác vào input reductions
+				_, _ = reductionsInput.Eval(`(val) => {
+					if (this.value !== val) {
+						this.value = val;
+						this.dispatchEvent(new Event('input', {bubbles: true}));
+						this.dispatchEvent(new Event('change', {bubbles: true}));
+					}
+				}`, discountCode)
 
-			_, _ = page.Eval(`() => {
-				const inp = document.querySelector('input[name="reductions"], input#reductions, input[placeholder*="Discount" i]');
-				if (inp) {
-					const form = inp.closest('form') || inp.parentElement || inp.closest('div');
-					if (form) {
-						const btn = form.querySelector('button[type="submit"], button[aria-label*="Apply" i], button');
-						if (btn && typeof btn.click === 'function') {
-							btn.click();
+				// Gửi phím Enter
+				_ = page.Keyboard.Press(input.Enter)
+				time.Sleep(500 * time.Millisecond)
+
+				// Tìm và bấm nút Apply
+				_, _ = page.Eval(`() => {
+					const inp = document.querySelector('input[name="reductions"], input#reductions, input[placeholder*="Discount" i]');
+					if (inp) {
+						const form = inp.closest('form') || inp.parentElement || inp.closest('div');
+						if (form) {
+							const btn = form.querySelector('button[type="submit"], button[aria-label*="Apply" i], button');
+							if (btn && typeof btn.click === 'function') {
+								btn.click();
+								return true;
+							}
+						}
+					}
+					const allBtns = Array.from(document.querySelectorAll('button'));
+					for (const b of allBtns) {
+						const t = (b.innerText || b.textContent || '').trim().toLowerCase();
+						const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+						if (t === 'apply' || t.startsWith('apply') || aria.includes('apply')) {
+							b.click();
 							return true;
 						}
 					}
-				}
-				const allBtns = Array.from(document.querySelectorAll('button'));
-				for (const b of allBtns) {
-					const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-					const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-					if (t === 'apply' || t.startsWith('apply') || aria.includes('apply')) {
-						b.click();
-						return true;
-					}
-				}
-				return false;
-			}`)
+					return false;
+				}`)
 
-			log.Printf("-> ĐÃ NHẬP VÀ BẤM ÁP DỤNG MÃ GIẢM GIÁ '%s' THÀNH CÔNG!\n", discountCode)
-			waitForDiscountAPIToComplete(page)
-			return nil
+				log.Printf("-> ĐÃ NHẬP VÀ BẤM ÁP DỤNG MÃ GIẢM GIÁ '%s' THÀNH CÔNG!\n", discountCode)
+
+				// 4. KIỂM TRA BẢO VỆ Ô PHONE & ZIP: Tuyệt đối không để ô Phone bị ghi đè thành '20'
+				if profile != nil {
+					restoreCheckoutFieldsIfTampered(page, profile)
+				}
+
+				waitForDiscountAPIToComplete(page)
+				return nil
+			}
 		}
 
 		time.Sleep(800 * time.Millisecond)
+	}
+
+	// 5. Nếu kết thúc mà ô Phone bị ảnh hưởng, phục hồi lại ngay
+	if profile != nil {
+		restoreCheckoutFieldsIfTampered(page, profile)
 	}
 
 	return fmt.Errorf("không tìm thấy ô reductions")
