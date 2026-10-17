@@ -3464,6 +3464,77 @@ func fillPaymentCardForm(page *rod.Page, profile *UserProfile) error {
 	return nil
 }
 
+// clickAddDiscountIfPresent kiểm tra và click nút 'Add discount' nếu có, để mở ô nhập mã giảm giá
+func clickAddDiscountIfPresent(page *rod.Page) bool {
+	// 1. Kiểm tra trước: Nếu ô nhập reductions đã hiển thị sẵn thì không bấm nữa (tránh toggle đóng lại)
+	alreadyOpen, err := page.Eval(`() => {
+		const sel = 'input[name="reductions"], input#reductions, input[name*="reduction"], input[placeholder*="Discount" i], input[aria-label*="Discount" i]';
+		const inp = document.querySelector(sel);
+		if (inp) {
+			const rect = inp.getBoundingClientRect();
+			return rect.width > 0 && rect.height > 0 && window.getComputedStyle(inp).visibility !== 'hidden';
+		}
+		return false;
+	}`)
+	if err == nil && alreadyOpen != nil && alreadyOpen.Value.Bool() {
+		log.Println("-> Ô nhập mã giảm giá đã hiển thị sẵn, tiến hành nhập luôn.")
+		return false
+	}
+
+	// 2. Tìm nút 'Add discount'
+	btnEl, err := page.ElementByJS(rod.Eval(`() => {
+		const candidates = Array.from(document.querySelectorAll('button, [role="button"], a, summary, [type="button"]'));
+		for (const el of candidates) {
+			const rect = el.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) continue;
+
+			const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+			const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+
+			// Tuyệt đối bỏ qua Gift card
+			if (text.includes('gift card') || aria.includes('gift card')) {
+				continue;
+			}
+
+			// Khớp với 'Add discount', 'Add a discount', 'Add promo'
+			if (text.includes('add discount') || aria.includes('add discount') ||
+				text.includes('add a discount') || aria.includes('add a discount') ||
+				text === 'add discount' || aria === 'add discount' ||
+				text.includes('add promo') || aria.includes('add promo')) {
+				return el;
+			}
+		}
+
+		// Fallback tìm phần tử chứa text 'Add discount' (ví dụ span/p nằm trong button)
+		const allTextEls = Array.from(document.querySelectorAll('span, p, div, b, strong'));
+		for (const el of allTextEls) {
+			const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+			if (text === 'add discount' || text === 'add a discount') {
+				const parentBtn = el.closest('button, [role="button"], a') || el;
+				const rect = parentBtn.getBoundingClientRect();
+				if (rect.width > 0 && rect.height > 0) {
+					return parentBtn;
+				}
+			}
+		}
+
+		return null;
+	}`))
+
+	if err == nil && btnEl != nil {
+		log.Println("-> [PHÁT HIỆN] Tìm thấy button 'Add discount'! Đang click vào để mở ô nhập mã giảm giá...")
+		_ = btnEl.ScrollIntoView()
+		time.Sleep(150 * time.Millisecond)
+		_ = btnEl.Click(proto.InputMouseButtonLeft, 1)
+		_, _ = btnEl.Eval(`() => { this.click(); }`)
+		time.Sleep(800 * time.Millisecond) // Đợi animation mở khung reductions
+		return true
+	}
+
+	log.Println("-> Không tìm thấy button 'Add discount' (hoặc ô nhập đã mở sẵn), tiến hành nhập luôn.")
+	return false
+}
+
 // applyDiscountCode tìm ô name="reductions", xoá sạch dữ liệu, nhập mã giảm giá và bấm Apply
 func applyDiscountCode(page *rod.Page, discountCode string) error {
 	discountCode = strings.TrimSpace(discountCode)
@@ -3471,35 +3542,22 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 		return nil
 	}
 
+	// 1. Kiểm tra button 'Add discount', nếu có thì click vào trước
+	clickAddDiscountIfPresent(page)
+
 	startTime := time.Now()
-	timeout := 15 * time.Second
+	timeout := 20 * time.Second
 
 	for time.Since(startTime) < timeout {
-		_, _ = page.Eval(`() => {
-			const toggles = Array.from(document.querySelectorAll('button, a, summary, [role="button"]'));
-			for (const t of toggles) {
-				const text = (t.innerText || t.textContent || '').trim().toLowerCase();
-				const aria = (t.getAttribute('aria-label') || '').toLowerCase();
-				if (text.includes('discount') || text.includes('gift card') || text.includes('promo') || aria.includes('discount')) {
-					const rect = t.getBoundingClientRect();
-					if (rect.width > 0 && rect.height > 0) {
-						t.click();
-						break;
-					}
-				}
-			}
-		}`)
-		time.Sleep(200 * time.Millisecond)
-
+		// 2. Tìm ô nhập name="reductions"
 		var reductionsInput *rod.Element
 		selectors := []string{
 			`input[name="reductions"]`,
 			`input#reductions`,
 			`input[name*="reduction"]`,
-			`input[placeholder*="Discount"]`,
-			`input[placeholder*="gift card"]`,
-			`input[placeholder*="Promo"]`,
-			`input[aria-label*="Discount"]`,
+			`input[placeholder*="Discount" i]`,
+			`input[placeholder*="Promo" i]`,
+			`input[aria-label*="Discount" i]`,
 		}
 
 		for _, sel := range selectors {
@@ -3511,6 +3569,11 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 					break
 				}
 			}
+		}
+
+		// Nếu sau 2s vẫn chưa thấy ô reductions, thử kích hoạt lại Add discount nếu có
+		if reductionsInput == nil && time.Since(startTime) > 2*time.Second {
+			clickAddDiscountIfPresent(page)
 		}
 
 		if reductionsInput != nil {
@@ -3534,11 +3597,11 @@ func applyDiscountCode(page *rod.Page, discountCode string) error {
 			time.Sleep(300 * time.Millisecond)
 
 			_, _ = page.Eval(`() => {
-				const inp = document.querySelector('input[name="reductions"], input#reductions, input[placeholder*="Discount"]');
+				const inp = document.querySelector('input[name="reductions"], input#reductions, input[placeholder*="Discount" i]');
 				if (inp) {
 					const form = inp.closest('form') || inp.parentElement || inp.closest('div');
 					if (form) {
-						const btn = form.querySelector('button[type="submit"], button[aria-label*="Apply"], button');
+						const btn = form.querySelector('button[type="submit"], button[aria-label*="Apply" i], button');
 						if (btn && typeof btn.click === 'function') {
 							btn.click();
 							return true;
