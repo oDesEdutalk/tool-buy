@@ -445,6 +445,12 @@ func (p *BrowserProfile) FormatBitBrowserTable(seq int, proxyStr string, launchT
 			parts := strings.Split(proxyStr, "@")
 			userPassDisplay = parts[0]
 			ipDisplay = parts[1]
+		} else {
+			parts := strings.Split(proxyStr, ":")
+			if len(parts) == 4 {
+				ipDisplay = parts[0] + ":" + parts[1]
+				userPassDisplay = parts[2] + " / " + parts[3]
+			}
 		}
 	}
 
