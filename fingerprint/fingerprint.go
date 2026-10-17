@@ -61,6 +61,94 @@ var CommonGPUs = []GPUInfo{
 	},
 }
 
+// AndroidGPUs chứa danh sách GPU điện thoại Android phổ biến (Adreno, Mali, Samsung Xclipse)
+var AndroidGPUs = []GPUInfo{
+	{
+		Vendor:   "Google Inc. (Qualcomm)",
+		Renderer: "ANGLE (Qualcomm, Adreno (TM) 750, OpenGL ES 3.2)",
+	},
+	{
+		Vendor:   "Google Inc. (Qualcomm)",
+		Renderer: "ANGLE (Qualcomm, Adreno (TM) 740, OpenGL ES 3.2)",
+	},
+	{
+		Vendor:   "Google Inc. (Qualcomm)",
+		Renderer: "ANGLE (Qualcomm, Adreno (TM) 730, OpenGL ES 3.2)",
+	},
+	{
+		Vendor:   "Google Inc. (ARM)",
+		Renderer: "ANGLE (ARM, Mali-G715 Immortalis-G715 MC11, OpenGL ES 3.2)",
+	},
+	{
+		Vendor:   "Google Inc. (ARM)",
+		Renderer: "ANGLE (ARM, Mali-G78 MP14, OpenGL ES 3.2)",
+	},
+	{
+		Vendor:   "Google Inc. (Samsung Electronics)",
+		Renderer: "ANGLE (Samsung Electronics, Samsung Xclipse 940, OpenGL ES 3.2)",
+	},
+}
+
+// AndroidDeviceInfo mô tả thiết bị di động Android thực tế
+type AndroidDeviceInfo struct {
+	Model           string
+	Brand           string
+	PlatformVersion string
+	ScreenWidth     int
+	ScreenHeight    int
+	DPR             float64
+	UA              string
+}
+
+// CommonAndroidDevices danh sách thiết bị Android phổ biến nhất hiện nay
+var CommonAndroidDevices = []AndroidDeviceInfo{
+	{
+		Model:           "Pixel 8 Pro",
+		Brand:           "Google",
+		PlatformVersion: "14.0.0",
+		ScreenWidth:     412,
+		ScreenHeight:    915,
+		DPR:             2.625,
+		UA:              "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Mobile Safari/537.36",
+	},
+	{
+		Model:           "SM-S928B", // Galaxy S24 Ultra
+		Brand:           "Samsung",
+		PlatformVersion: "14.0.0",
+		ScreenWidth:     412,
+		ScreenHeight:    912,
+		DPR:             3.0,
+		UA:              "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Mobile Safari/537.36",
+	},
+	{
+		Model:           "Pixel 8",
+		Brand:           "Google",
+		PlatformVersion: "14.0.0",
+		ScreenWidth:     412,
+		ScreenHeight:    915,
+		DPR:             2.625,
+		UA:              "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Mobile Safari/537.36",
+	},
+	{
+		Model:           "SM-S918B", // Galaxy S23 Ultra
+		Brand:           "Samsung",
+		PlatformVersion: "14.0.0",
+		ScreenWidth:     393,
+		ScreenHeight:    873,
+		DPR:             2.75,
+		UA:              "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Mobile Safari/537.36",
+	},
+	{
+		Model:           "Pixel 7 Pro",
+		Brand:           "Google",
+		PlatformVersion: "13.0.0",
+		ScreenWidth:     412,
+		ScreenHeight:    892,
+		DPR:             2.625,
+		UA:              "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Mobile Safari/537.36",
+	},
+}
+
 // GeoLocationInfo chứa thông tin địa lý, múi giờ và toạ độ GPS chuẩn BitBrowser / Anti-detect
 type GeoLocationInfo struct {
 	Country        string
@@ -220,40 +308,106 @@ type BrowserProfile struct {
 	Geo                 GeoLocationInfo
 	Language            string
 	KernelVersion       string
-	OS                  string
+	OS                  string // "Android" hoặc "Windows"
+	Platform            string // "Linux armv8l" hoặc "Win32"
+	IsMobile            bool   // true cho Android, false cho Windows
+	DeviceModel         string // vd: "Pixel 8 Pro", "SM-S928B"
+	TouchPoints         int    // 5 cho Android, 0 cho Windows
 	UserAgent           string
 	ProxyIP             string
 }
 
 // GenerateRandomProfile tự động sinh một bộ vân tay ngẫu nhiên hoàn toàn độc lập chuẩn BitBrowser
-// Có thể truyền customUA để trích xuất KernelVersion tương thích
-func GenerateRandomProfile(screenW, screenH int, customUA ...string) *BrowserProfile {
+// targetOS: "android" (mặc định khuyên dùng khi chạy Proxy 4G để đồng bộ TCP/IP), "windows" hoặc "auto"
+// customUA: nếu truyền vào có thể tự nhận diện OS từ UA
+func GenerateRandomProfile(targetOS string, screenW, screenH int, customUA ...string) *BrowserProfile {
+	geo := USLocations[rand.Intn(len(USLocations))]
+	kernelVer := KernelVersions[rand.Intn(len(KernelVersions))]
+
+	explicitUA := ""
+	if len(customUA) > 0 && strings.TrimSpace(customUA[0]) != "" {
+		explicitUA = strings.TrimSpace(customUA[0])
+		match := chromeVerRegex.FindStringSubmatch(explicitUA)
+		if len(match) > 1 {
+			kernelVer = match[1]
+		}
+	}
+
+	normalizedOS := strings.ToLower(strings.TrimSpace(targetOS))
+	if normalizedOS == "" || normalizedOS == "auto" {
+		if explicitUA != "" {
+			if strings.Contains(strings.ToLower(explicitUA), "android") || strings.Contains(strings.ToLower(explicitUA), "linux") {
+				normalizedOS = "android"
+			} else {
+				normalizedOS = "windows"
+			}
+		} else {
+			// Mặc định chọn Android vì người dùng dùng Proxy 4G Mobile để đồng bộ TCP/IP
+			normalizedOS = "android"
+		}
+	}
+
+	if normalizedOS == "android" {
+		dev := CommonAndroidDevices[rand.Intn(len(CommonAndroidDevices))]
+		gpu := AndroidGPUs[rand.Intn(len(AndroidGPUs))]
+
+		ua := explicitUA
+		if ua == "" || !strings.Contains(strings.ToLower(ua), "android") {
+			ua = fmt.Sprintf(dev.UA, kernelVer)
+		}
+
+		sW := dev.ScreenWidth
+		sH := dev.ScreenHeight
+		if screenW > 0 && screenH > 0 && screenW < screenH {
+			sW = screenW
+			sH = screenH
+		}
+
+		return &BrowserProfile{
+			HardwareConcurrency: 8,
+			DeviceMemory:        8,
+			GPU:                 gpu,
+			ScreenWidth:         sW,
+			ScreenHeight:        sH,
+			DevicePixelRatio:    dev.DPR,
+			CanvasNoiseSeed:     0.1 + rand.Float64()*0.9,
+			AudioNoiseSeed:      0.1 + rand.Float64()*0.9,
+			ClientRectNoiseSeed: 0.1 + rand.Float64()*0.9,
+			Geo:                 geo,
+			Language:            "en-US",
+			KernelVersion:       kernelVer,
+			OS:                  "Android",
+			Platform:            "Linux armv8l",
+			IsMobile:            true,
+			DeviceModel:         dev.Model,
+			TouchPoints:         5,
+			UserAgent:           ua,
+		}
+	}
+
 	gpu := CommonGPUs[rand.Intn(len(CommonGPUs))]
 	cores := cpuCoresOptions[rand.Intn(len(cpuCoresOptions))]
 	memory := deviceMemoryOpt[rand.Intn(len(deviceMemoryOpt))]
 	dpr := devicePixelRatios[rand.Intn(len(devicePixelRatios))]
-	geo := USLocations[rand.Intn(len(USLocations))]
 
-	// Kernel version: mặc định ưu tiên chọn ngẫu nhiên trong KernelVersions (bao gồm 148)
-	kernelVer := KernelVersions[rand.Intn(len(KernelVersions))]
-
-	ua := ""
-	if len(customUA) > 0 && strings.TrimSpace(customUA[0]) != "" {
-		ua = strings.TrimSpace(customUA[0])
-		match := chromeVerRegex.FindStringSubmatch(ua)
-		if len(match) > 1 {
-			kernelVer = match[1]
-		}
-	} else {
+	ua := explicitUA
+	if ua == "" || strings.Contains(strings.ToLower(ua), "android") {
 		ua = fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Safari/537.36", kernelVer)
+	}
+
+	sW := screenW
+	sH := screenH
+	if sW <= 0 || sH <= 0 {
+		sW = 1920
+		sH = 1080
 	}
 
 	return &BrowserProfile{
 		HardwareConcurrency: cores,
 		DeviceMemory:        memory,
 		GPU:                 gpu,
-		ScreenWidth:         screenW,
-		ScreenHeight:        screenH,
+		ScreenWidth:         sW,
+		ScreenHeight:        sH,
 		DevicePixelRatio:    dpr,
 		CanvasNoiseSeed:     0.1 + rand.Float64()*0.9,
 		AudioNoiseSeed:      0.1 + rand.Float64()*0.9,
@@ -262,14 +416,18 @@ func GenerateRandomProfile(screenW, screenH int, customUA ...string) *BrowserPro
 		Language:            "en-US",
 		KernelVersion:       kernelVer,
 		OS:                  "Windows",
+		Platform:            "Win32",
+		IsMobile:            false,
+		DeviceModel:         "",
+		TouchPoints:         0,
 		UserAgent:           ua,
 	}
 }
 
 // Summary trả về chuỗi tóm tắt thông số vân tay ngắn gọn
 func (p *BrowserProfile) Summary() string {
-	return fmt.Sprintf("Mỹ (%s) / %s / %s | Timezone: %s | GPS: %.6f/%.6f | CPU: %d cores | RAM: %dGB | GPU: %s",
-		p.Geo.Country, p.Geo.State, p.Geo.City, p.Geo.Timezone, p.Geo.Longitude, p.Geo.Latitude,
+	return fmt.Sprintf("Mỹ (%s) / %s / %s | OS: %s | Timezone: %s | GPS: %.6f/%.6f | CPU: %d cores | RAM: %dGB | GPU: %s",
+		p.Geo.Country, p.Geo.State, p.Geo.City, p.OS, p.Geo.Timezone, p.Geo.Longitude, p.Geo.Latitude,
 		p.HardwareConcurrency, p.DeviceMemory, p.GPU.Renderer)
 }
 
@@ -298,6 +456,13 @@ func (p *BrowserProfile) FormatBitBrowserTable(seq int, proxyStr string, launchT
 		}
 	}
 
+	tcpSyncStatus := "ĐỒNG BỘ 100% VỚI PROXY 4G MOBILE [TCP/IP OS: ANDROID MATCHED]"
+	deviceDisplay := fmt.Sprintf("%s (Mobile: %t | Touch: %d points)", p.DeviceModel, p.IsMobile, p.TouchPoints)
+	if !p.IsMobile {
+		tcpSyncStatus = "CẦN PROXY DÂN CƯ CỐ ĐỊNH (ISP/RESIDENTIAL) ĐỂ ĐỒNG BỘ TCP/IP WINDOWS"
+		deviceDisplay = "Máy tính để bàn Desktop (Windows PC)"
+	}
+
 	return fmt.Sprintf(`====================================================================================================
    [BITBROWSER ENVIRONMENT EMULATOR - THÔNG SỐ VÂN TAY TRÌNH DUYỆT (CHỐNG BOT)]
    ----------------------------------------------------------------------------------------------------
@@ -315,7 +480,9 @@ func (p *BrowserProfile) FormatBitBrowserTable(seq int, proxyStr string, launchT
    2FA Verification : 2FA key not set
    Remark           : Anti-bot Stealth Emulation Active
    Kernel Version   : %s
-   OS               : %s
+   OS               : %s (Platform: %s)
+   Đồng bộ TCP/IP   : %s
+   Thiết bị (Device): %s
    Phần cứng        : %d Cores CPU | %dGB RAM | DPR: %.2f | Screen: %dx%d
    Card đồ hoạ      : %s
    User-Agent       : %s
@@ -329,7 +496,9 @@ func (p *BrowserProfile) FormatBitBrowserTable(seq int, proxyStr string, launchT
 		userPassDisplay,
 		seq,
 		p.KernelVersion,
-		p.OS,
+		p.OS, p.Platform,
+		tcpSyncStatus,
+		deviceDisplay,
 		p.HardwareConcurrency, p.DeviceMemory, p.DevicePixelRatio, p.ScreenWidth, p.ScreenHeight,
 		p.GPU.Renderer,
 		p.UserAgent,
@@ -365,16 +534,45 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 	_ = proto.NetworkSetUserAgentOverride{
 		UserAgent:      p.UserAgent,
 		AcceptLanguage: "en-US,en;q=0.9",
-		Platform:       "Win32",
+		Platform:       p.Platform,
 	}.Call(page)
 
-	// 5. Đoạn mã JavaScript tiêm vào ngay khi tạo Document
+	// 5. Nếu là Mobile (Android): Kích hoạt Device Metrics & Touch Emulation CDP
+	if p.IsMobile {
+		_ = proto.EmulationSetDeviceMetricsOverride{
+			Width:             p.ScreenWidth,
+			Height:            p.ScreenHeight,
+			DeviceScaleFactor: p.DevicePixelRatio,
+			Mobile:            true,
+		}.Call(page)
+
+		maxTouch := 5
+		_ = proto.EmulationSetTouchEmulationEnabled{
+			Enabled:        true,
+			MaxTouchPoints: &maxTouch,
+		}.Call(page)
+	}
+
+	availHeight := p.ScreenHeight - 40
+	if p.IsMobile {
+		availHeight = p.ScreenHeight
+	}
+
+	arch := "x86"
+	platVersion := "15.0.0"
+	if p.IsMobile {
+		arch = "arm"
+		platVersion = "14.0.0"
+	}
+
+	// 6. Đoạn mã JavaScript tiêm vào ngay khi tạo Document
 	injectionScript := fmt.Sprintf(`(() => {
-		// 1. Giả lập Language & Languages & Platform
+		// 1. Giả lập Language & Languages & Platform & MaxTouchPoints
 		try {
 			Object.defineProperty(navigator, 'language', { get: () => 'en-US', configurable: true });
 			Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true });
-			Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+			Object.defineProperty(navigator, 'platform', { get: () => %q, configurable: true });
+			Object.defineProperty(navigator, 'maxTouchPoints', { get: () => %d, configurable: true });
 		} catch(e) {}
 
 		// 2. Giả lập Timezone Intl API & Date.prototype.getTimezoneOffset
@@ -468,32 +666,50 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 		// 6. Giả lập Client Hints (navigator.userAgentData)
 		try {
 			if (navigator.userAgentData) {
+				const isMobileVal = %t;
+				const platformName = %q;
+				const archVal = %q;
+				const kVer = %q;
+				const modelName = %q;
+				const platVer = %q;
 				Object.defineProperty(navigator, 'userAgentData', {
 					get: () => ({
 						brands: [
-							{ brand: 'Chromium', version: %q },
-							{ brand: 'Google Chrome', version: %q },
+							{ brand: 'Chromium', version: kVer },
+							{ brand: 'Google Chrome', version: kVer },
 							{ brand: 'Not(A:Brand', version: '24' }
 						],
-						mobile: false,
-						platform: 'Windows',
+						mobile: isMobileVal,
+						platform: platformName,
 						getHighEntropyValues: async (hints) => ({
-							architecture: 'x86',
+							architecture: archVal,
 							bitness: '64',
 							brands: [
-								{ brand: 'Chromium', version: %q },
-								{ brand: 'Google Chrome', version: %q },
+								{ brand: 'Chromium', version: kVer },
+								{ brand: 'Google Chrome', version: kVer },
 								{ brand: 'Not(A:Brand', version: '24' }
 							],
-							mobile: false,
-							model: '',
-							platform: 'Windows',
-							platformVersion: '15.0.0',
-							uaFullVersion: %q + '.0.7100.95'
+							mobile: isMobileVal,
+							model: modelName,
+							platform: platformName,
+							platformVersion: platVer,
+							uaFullVersion: kVer + '.0.7100.95'
 						})
 					}),
 					configurable: true
 				});
+			}
+		} catch(e) {}
+
+		// 7. Giả lập sự kiện Touch nếu là mobile
+		try {
+			if (%t) {
+				if (!('ontouchstart' in window)) {
+					window.ontouchstart = null;
+					window.ontouchend = null;
+					window.ontouchmove = null;
+					window.ontouchcancel = null;
+				}
 			}
 		} catch(e) {}
 
@@ -567,7 +783,7 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 			Object.defineProperty(screen, 'width', { get: () => %d, configurable: true });
 			Object.defineProperty(screen, 'height', { get: () => %d, configurable: true });
 			Object.defineProperty(screen, 'availWidth', { get: () => %d, configurable: true });
-			Object.defineProperty(screen, 'availHeight', { get: () => %d - 40, configurable: true });
+			Object.defineProperty(screen, 'availHeight', { get: () => %d, configurable: true });
 			Object.defineProperty(screen, 'colorDepth', { get: () => 24, configurable: true });
 			Object.defineProperty(screen, 'pixelDepth', { get: () => 24, configurable: true });
 			Object.defineProperty(window, 'devicePixelRatio', { get: () => %f, configurable: true });
@@ -676,7 +892,7 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 						Object.defineProperty(evHost, 'candidate', { value: hostCand, enumerable: true });
 						dispatchToHandlers(evHost);
 
-						// 2. Server Reflexive Candidate (Public IP Address khớp 100% với IP Proxy)
+						// 2. Server Reflexive Candidate (Public IP Address khớp 100%% với IP Proxy)
 						const srflxStr = 'candidate:222222222 1 udp 1686052607 ' + targetProxyIP + ' 54321 typ srflx raddr 0.0.0.0 rport 0 generation 0';
 						const srflxCand = makeCandidate(srflxStr, targetProxyIP, 'srflx', 54321);
 						const evSrflx = new Event('icecandidate');
@@ -756,17 +972,21 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 			}
 		} catch(e) {}
 	})();`,
+		p.Platform,
+		p.TouchPoints,
 		p.Geo.Timezone,
 		p.Geo.TimezoneOffset,
 		p.Geo.Latitude,
 		p.Geo.Longitude,
 		p.HardwareConcurrency,
 		p.DeviceMemory,
+		p.IsMobile,
+		p.OS,
+		arch,
 		p.KernelVersion,
-		p.KernelVersion,
-		p.KernelVersion,
-		p.KernelVersion,
-		p.KernelVersion,
+		p.DeviceModel,
+		platVersion,
+		p.IsMobile,
 		p.GPU.Vendor,
 		p.GPU.Renderer,
 		p.CanvasNoiseSeed,
@@ -775,7 +995,7 @@ func (p *BrowserProfile) ApplyToPage(page *rod.Page) error {
 		p.ScreenWidth,
 		p.ScreenHeight,
 		p.ScreenWidth,
-		p.ScreenHeight,
+		availHeight,
 		p.DevicePixelRatio,
 		p.ProxyIP,
 	)

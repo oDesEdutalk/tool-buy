@@ -60,10 +60,12 @@ flowchart TD
      - **Địa lý & Toạ độ GPS (`GeoLocation`)**: Ngẫu nhiên theo các bang Mỹ thực tế (Texas/Spring, Georgia/Buford, New York, California, Florida...). Toạ độ chuẩn như ảnh: Long/Lat `-95.416954 / 30.079998`, Zip code `77388`.
      - **Múi giờ (`Timezone`)**: Tự động đồng bộ theo toạ độ địa lý (ví dụ `America/Chicago`, `America/New_York`, `America/Los_Angeles`). Ghi đè cả Chrome CDP Native C++ lẫn `Intl.DateTimeFormat` và `Date.prototype.getTimezoneOffset` (offset +300 phút thay vì để lộ múi giờ VN -420 phút).
      - **Ngôn ngữ (`Language`)**: Cố định chuẩn Mỹ `en-US`, `Accept-Language: en-US,en;q=0.9` ở cả cờ launcher, CDP network header và `navigator.languages = ['en-US', 'en']`.
-     - **Hệ điều hành & Kernel (`OS & Kernel Version`)**: Windows NT 10.0 (Win32), Kernel Version 148 (hoặc các bản 144, 140, 134) đồng bộ với `navigator.userAgentData` (Client Hints).
-     - **CPU Cores (`hardwareConcurrency`)**: Ngẫu nhiên 4, 8, 12, 16, 24, 32 cores.
-     - **RAM (`deviceMemory`)**: Ngẫu nhiên 8GB, 16GB, 32GB.
-     - **Card đồ họa (WebGL GPU)**: Giả lập GPU rời/tích hợp thực tế (NVIDIA RTX 3060/3070/4060/4070, Intel Iris Xe, UHD 630...).
+     - **Hệ điều hành & Đồng bộ TCP/IP (`OS & Kernel Version`)**: 
+       - Chế độ **Android Mobile (Mặc định)**: Đồng bộ 100% với chữ ký TCP/IP (TTL=64, MSS, TCP Window) của Proxy 4G/LTE di động. Sử dụng User-Agent Chrome Android (Pixel 8 Pro, Galaxy S24 Ultra), `Platform: Linux armv8l`, `Touch Points: 5`, Client Hints `platform: Android`, GPU di động Qualcomm Adreno 750 / ARM Mali-G715.
+       - Chế độ **Windows Desktop (`-os windows`)**: Dành riêng khi chạy với Proxy dân cư cố định (Static Residential / ISP Proxy). Khai báo Windows NT 10.0, `Platform: Win32`, GPU NVIDIA RTX / Intel.
+     - **CPU Cores (`hardwareConcurrency`)**: Ngẫu nhiên 4, 8, 12, 16, 24, 32 cores (Android chuẩn 8 cores).
+     - **RAM (`deviceMemory`)**: Ngẫu nhiên 8GB, 16GB, 32GB (Android chuẩn 8GB).
+     - **Card đồ họa (WebGL GPU)**: Giả lập GPU phù hợp với OS (Adreno 750, Mali-G715 trên Android; NVIDIA RTX 3060/3070/4060, Intel Iris Xe trên Windows).
      - **Canvas & AudioContext & ClientRects Noise**: Bơm nhiễu độc lập trên mỗi luồng để vượt qua kiểm tra hash của ToDetect, BrowserLeaks, Cloudflare, Shopify.
      - **Bảo vệ WebRTC**: Kích hoạt cờ chống rò rỉ địa chỉ IP thật qua giao thức WebRTC.
      - **Hiển thị Log Trực Quan**: In bảng chi tiết thông số giả lập chuẩn giao diện BitBrowser ngay khi khởi chạy từng luồng.

@@ -41,4 +41,5 @@ Hoặc dùng file exe:
 | `-url` | `https://www.on.com/en-us/products/5-court-shorts-m-1mg1019/...` | Link sản phẩm cần mua |
 | `-size` | `S` | Size sản phẩm cần chọn (S, M, L, XL, ...) |
 | `-proxy` | Proxy mặc định | SOCKS5 proxy (`host:port:user:pass` hoặc `socks5://...`) |
+| `-os` | `android` | Hệ điều hành giả lập (`android` đồng bộ 100% với Mobile Proxy 4G/LTE; `windows` khi dùng Residential Proxy) |
 | `-headless` | `false` | `true` để chạy ẩn |

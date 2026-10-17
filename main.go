@@ -59,6 +59,7 @@ type CheckoutTask struct {
 	DiscountFile string
 	Headless     bool
 	UserAgent    string
+	OS           string
 	TeleCfg      TelegramConfig
 }
 
@@ -529,11 +530,51 @@ var defaultUserAgents = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
 }
 
-// getRandomUserAgent đọc ngẫu nhiên một User-Agent từ file (hoặc dùng danh sách mặc định)
-func getRandomUserAgent(filePath string) string {
+// defaultAndroidUserAgents danh sách User-Agent điện thoại Android dự phòng chuẩn BitBrowser
+var defaultAndroidUserAgents = []string{
+	"Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+}
+
+// getRandomUserAgent đọc ngẫu nhiên một User-Agent từ file theo OS (hoặc dùng danh sách mặc định)
+func getRandomUserAgent(filePath string, osType ...string) string {
+	targetOS := "android"
+	if len(osType) > 0 && strings.TrimSpace(osType[0]) != "" {
+		targetOS = strings.ToLower(strings.TrimSpace(osType[0]))
+	}
+
 	lines, err := readLinesFromFile(filePath)
 	if err == nil && len(lines) > 0 {
+		var matched []string
+		for _, l := range lines {
+			l = strings.TrimSpace(l)
+			if l == "" || strings.HasPrefix(l, "#") {
+				continue
+			}
+			lower := strings.ToLower(l)
+			if targetOS == "android" {
+				if strings.Contains(lower, "android") || strings.Contains(lower, "linux") {
+					matched = append(matched, l)
+				}
+			} else {
+				if strings.Contains(lower, "windows") {
+					matched = append(matched, l)
+				}
+			}
+		}
+		if len(matched) > 0 {
+			return matched[rand.Intn(len(matched))]
+		}
 		return lines[rand.Intn(len(lines))]
+	}
+
+	if targetOS == "android" {
+		return defaultAndroidUserAgents[rand.Intn(len(defaultAndroidUserAgents))]
 	}
 	return defaultUserAgents[rand.Intn(len(defaultUserAgents))]
 }
@@ -553,7 +594,18 @@ var commonResolutions = []WindowResolution{
 	{1280, 800},
 }
 
-func getRandomResolution() (int, int) {
+var commonMobileResolutions = []WindowResolution{
+	{412, 915},
+	{393, 873},
+	{412, 892},
+	{412, 912},
+}
+
+func getRandomResolution(osType ...string) (int, int) {
+	if len(osType) > 0 && strings.ToLower(strings.TrimSpace(osType[0])) == "android" {
+		res := commonMobileResolutions[rand.Intn(len(commonMobileResolutions))]
+		return res.Width, res.Height
+	}
 	res := commonResolutions[rand.Intn(len(commonResolutions))]
 	return res.Width, res.Height
 }
@@ -888,13 +940,13 @@ func executeSingleCheckout(task CheckoutTask) error {
 
 	ua := task.UserAgent
 	if ua == "" {
-		ua = getRandomUserAgent("user_agents.txt")
+		ua = getRandomUserAgent("user_agents.txt", task.OS)
 	}
 
-	winW, winH := getRandomResolution()
+	winW, winH := getRandomResolution(task.OS)
 
-	// Tự sinh bộ vân tay ngẫu nhiên độc lập chuẩn BitBrowser (bao gồm Kernel, GPU, Geolocation, Timezone)
-	fpProfile := fingerprint.GenerateRandomProfile(winW, winH, ua)
+	// Tự sinh bộ vân tay ngẫu nhiên độc lập chuẩn BitBrowser (bao gồm Kernel, GPU, Geolocation, Timezone, OS)
+	fpProfile := fingerprint.GenerateRandomProfile(task.OS, winW, winH, ua)
 
 	l := launcher.New().
 		Leakless(false).
@@ -989,12 +1041,18 @@ func executeSingleCheckout(task CheckoutTask) error {
 		}
 	})()
 
-	page.MustSetWindow(0, 0, winW, winH)
+	page.MustSetWindow(0, 0, fpProfile.ScreenWidth, fpProfile.ScreenHeight)
 	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
 		UserAgent:      fpProfile.UserAgent,
 		AcceptLanguage: "en-US,en;q=0.9",
-		Platform:       "Win32",
+		Platform:       fpProfile.Platform,
 	})
+
+	if strings.ToLower(task.OS) == "windows" {
+		log.Printf("[!] LƯU Ý: Đang chạy chế độ OS Windows. Nếu bạn dùng Mobile Proxy (4G/LTE), tầng mạng TCP/IP sẽ báo Android, gây lệch OS với User-Agent. Hãy dùng Residential Proxy hoặc chuyển sang '-os android' để đồng bộ 100%%!\n")
+	} else {
+		log.Printf("[+] Đang chạy chế độ OS Android: Trình duyệt & phần cứng được đồng bộ 100%% với tầng mạng TCP/IP của Mobile Proxy (4G/LTE)!\n")
+	}
 
 	log.Printf("\n%s\n", fpProfile.FormatBitBrowserTable(1, task.Proxy, time.Now().Format("2006-01-02 15:04:05")))
 
@@ -1139,6 +1197,7 @@ func main() {
 	cvvFlag := flag.String("cvv", "", "Mã bảo mật CVV")
 	discountFileFlag := flag.String("discount-file", "discounts.txt", "File danh sách mã giảm giá (mỗi dòng 1 mã)")
 	discountFlag := flag.String("discount", "IDME_ON_20_ITULQV", "Mã giảm giá (Discount code)")
+	osFlag := flag.String("os", "android", "Hệ điều hành vân tay: 'android' (khuyên dùng khi chạy Proxy 4G Mobile để đồng bộ TCP/IP) hoặc 'windows' (khi dùng Residential Proxy)")
 
 	flag.Parse()
 
@@ -1323,6 +1382,7 @@ func main() {
 			DiscountFile: *discountFileFlag,
 			Headless:     *headless,
 			UserAgent:    currentUA,
+			OS:           *osFlag,
 			TeleCfg:      teleCfg,
 		}
 
