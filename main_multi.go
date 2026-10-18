@@ -1172,7 +1172,15 @@ func main() {
 		if *proxySingle != "" {
 			proxies = append(proxies, *proxySingle)
 		} else {
-			proxies = append(proxies, DefaultProxyMulti)
+			var err error
+			proxies, err = readLinesFromFile(*proxyFileFlag)
+			if err != nil || len(proxies) == 0 {
+				errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>CHƯA CÓ PROXY ĐỂ CHẠY!</b>\n- File proxy <code>%s</code> hiện đang trống (chưa có proxy nào).\n- Vui lòng bổ sung proxy vào file để chạy tool.\n- Thời gian: %s",
+					*proxyFileFlag, time.Now().Format("2006-01-02 15:04:05"))
+				fmt.Printf("\n[!] LỖI: Chưa có proxy nào trong file '%s'!\n[!] Vui lòng thêm proxy vào file '%s' trước khi chạy tool.\n\n", *proxyFileFlag, *proxyFileFlag)
+				sendTelegramAlert(teleCfg, errMsg)
+				return
+			}
 		}
 		if *discountSingle != "" {
 			discounts = append(discounts, *discountSingle)
@@ -1180,8 +1188,12 @@ func main() {
 	} else {
 		var err error
 		proxies, err = readLinesFromFile(*proxyFileFlag)
-		if err != nil || len(proxies) == 0 {
-			log.Printf("[!] CẢNH BÁO: Không tìm thấy hoặc file proxy '%s' trống!\n", *proxyFileFlag)
+		if *proxySingle == "" && (err != nil || len(proxies) == 0) {
+			errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>CHƯA CÓ PROXY ĐỂ CHẠY!</b>\n- File proxy <code>%s</code> hiện đang trống (chưa có proxy nào).\n- Vui lòng bổ sung proxy vào file để chạy tool.\n- Thời gian: %s",
+				*proxyFileFlag, time.Now().Format("2006-01-02 15:04:05"))
+			fmt.Printf("\n[!] LỖI: Chưa có proxy nào trong file '%s'!\n[!] Vui lòng thêm proxy vào file '%s' trước khi chạy tool.\n\n", *proxyFileFlag, *proxyFileFlag)
+			sendTelegramAlert(teleCfg, errMsg)
+			return
 		}
 
 		cards, err = readLinesFromFile(*cardFileFlag)
@@ -1211,13 +1223,16 @@ func main() {
 
 	// Khởi tạo ProxyManager quản lý danh sách proxy, tự động xoay vòng khi lỗi và lưu proxy thành công
 	pm := NewProxyManager(*proxyFileFlag, "proxies_failed.txt", teleCfg)
+	if *proxySingle != "" {
+		pm.available = append([]string{*proxySingle}, pm.available...)
+	}
 	initialAvailable := pm.AvailableCount()
 
 	// Kiểm tra nếu không còn proxy nào khả dụng -> Báo lỗi & gửi Telegram
 	if initialAvailable == 0 {
-		errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>HẾT PROXY ĐỂ CHẠY!</b>\n- File proxy <code>%s</code> hiện không còn proxy nào khả dụng (tất cả proxy đều đã bị lỗi/hỏng).\n- Vui lòng bổ sung proxy mới vào file để tiếp tục.\n- Thời gian: %s",
+		errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>HẾT PROXY KHẢ DỤNG!</b>\n- File proxy <code>%s</code> hiện không còn proxy nào khả dụng (tất cả proxy đều đã bị lỗi/hỏng trong proxies_failed.txt).\n- Vui lòng bổ sung proxy mới vào file để tiếp tục.\n- Thời gian: %s",
 			*proxyFileFlag, time.Now().Format("2006-01-02 15:04:05"))
-		fmt.Printf("\n[!] LỖI: Hết proxy khả dụng! Tất cả proxy trong '%s' đều đã bị lỗi. Đang gửi thông báo Telegram...\n", *proxyFileFlag)
+		fmt.Printf("\n[!] LỖI: Hết proxy khả dụng! Tất cả proxy trong '%s' đều đã bị lỗi (đã lưu tại proxies_failed.txt).\n[!] Vui lòng thêm proxy mới vào file trước khi chạy tool.\n\n", *proxyFileFlag)
 		sendTelegramAlert(teleCfg, errMsg)
 		return
 	}

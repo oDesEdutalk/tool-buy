@@ -1,1 +1,2 @@
 [2026-10-17 23:11:35] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-st-Arizona-session-48458015:41b761 | Lỗi: thanh toán không thành công sau 4 lần thử: There was an issue processing your payment. Try again or use a different payment method.
+[2026-10-17 23:22:08] global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-st-Arizona-session-48458015:41b761 | Lỗi: thanh toán không thành công: không thể bấm nút Pay now hoặc không nhận được xác nhận đơn hàng

@@ -26,8 +26,8 @@ import (
 	"tool-buy/fingerprint"
 )
 
-// DefaultProxy do người dùng cung cấp
-const DefaultProxy = "global.rotip.trustsource.live:20000:USER501664-zone-custom-region-US-st-Arizona-session-48458015:41b761"
+// DefaultProxy mặc định (để trống - yêu cầu cấu hình proxy từ file hoặc cờ -proxy)
+const DefaultProxy = ""
 
 // UserProfile lưu thông tin người dùng được trích xuất từ chuỗi mẫu
 type UserProfile struct {
@@ -1325,6 +1325,18 @@ func main() {
 		log.Printf("-> Mã giảm giá   : Không sử dụng\n")
 	}
 
+	// Kiểm tra nếu chưa chỉ định proxy trực tiếp qua cờ -proxy thì bắt buộc phải có proxy trong file
+	if *proxyRaw == "" {
+		rawProxies, err := readLinesFromFile(*proxyFileFlag)
+		if err != nil || len(rawProxies) == 0 {
+			errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>CHƯA CÓ PROXY ĐỂ CHẠY!</b>\n- File proxy <code>%s</code> hiện đang trống (chưa có proxy nào).\n- Vui lòng bổ sung proxy vào file để chạy tool.\n- Thời gian: %s",
+				*proxyFileFlag, time.Now().Format("2006-01-02 15:04:05"))
+			fmt.Printf("\n[!] LỖI: Chưa có proxy nào trong file '%s'!\n[!] Vui lòng thêm proxy vào file '%s' trước khi chạy tool.\n\n", *proxyFileFlag, *proxyFileFlag)
+			sendTelegramAlert(teleCfg, errMsg)
+			return
+		}
+	}
+
 	pm := NewProxyManager(*proxyFileFlag, "proxies_failed.txt", teleCfg)
 
 	if *proxyRaw != "" {
@@ -1332,7 +1344,11 @@ func main() {
 	}
 
 	if pm.AvailableCount() == 0 {
-		pm.available = append(pm.available, DefaultProxy)
+		errMsg := fmt.Sprintf("🚨 <b>[CẢNH BÁO TOOL CHECKOUT]</b>\n\n⚠️ <b>HẾT PROXY KHẢ DỤNG!</b>\n- File proxy <code>%s</code> hiện không còn proxy nào khả dụng (tất cả proxy đều đã bị lỗi/hỏng trong proxies_failed.txt).\n- Vui lòng bổ sung proxy mới vào file để tiếp tục.\n- Thời gian: %s",
+			*proxyFileFlag, time.Now().Format("2006-01-02 15:04:05"))
+		fmt.Printf("\n[!] LỖI: Hết proxy khả dụng! Tất cả proxy trong '%s' đều đã bị lỗi (đã lưu tại proxies_failed.txt).\n[!] Vui lòng thêm proxy mới vào file trước khi chạy tool.\n\n", *proxyFileFlag)
+		sendTelegramAlert(teleCfg, errMsg)
+		return
 	}
 
 	log.Printf("-> Số proxy khả dụng ban đầu: %d\n", pm.AvailableCount())
